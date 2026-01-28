@@ -117,11 +117,15 @@ def truncate_text(text, max_len=55):
     text = str(text) if text else ""
     return text[:max_len] + "..." if len(text) > max_len else text
 
-def export_sheet_to_pdf(sheet_id, sheet_gid, creds, fit=True):
+def export_sheet_to_pdf(sheet_id, sheet_gid, creds, fit=True, margin=0.2):
     url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export"
     params = {
         "format": "pdf", "gid": sheet_gid, "portrait": "true",
         "fitw": "true" if fit else "false", "gridlines": "false"
+        "top_margin": str(margin),
+        "bottom_margin": str(margin),
+        "left_margin": str(margin),
+        "right_margin": str(margin)
     }
     headers = {"Authorization": f"Bearer {creds.token}"}
     if not creds.valid:
@@ -331,7 +335,7 @@ def warehouse_interface(client, creds):
                     with st.spinner("Generating Batch..."):
                         merger = PdfWriter()
                         # Use default settings since we hid the expander for cleanliness
-                        settings = {'rotate': True, 'scale': 0.95, 'x': -20, 'y': 0} 
+                        settings = {'rotate': True, 'scale': 0.95, 'x': -53, 'y': 80} 
                         
                         for idx, row in edited_df.iterrows():
                             sku = row['vendor_sku']
@@ -461,3 +465,4 @@ else:
         warehouse_interface(client, creds)
     else:
         upload_interface(client)
+

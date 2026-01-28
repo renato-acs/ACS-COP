@@ -363,7 +363,7 @@ def warehouse_interface(client, creds):
                 # SKU | Qty Input | Print Button
                 
                 # Settings hidden at bottom, define defaults here for single print
-                current_settings = {'rotate': True, 'scale': 0.95, 'x': -20, 'y': 0}
+                current_settings = {'rotate': True, 'scale': 0.95, 'x': -53, 'y': 80}
                 
                 # We use a container with a fixed height or scrollable if list is long? 
                 # Streamlit containers adapt.
@@ -470,5 +470,6 @@ else:
         warehouse_interface(client, creds)
     else:
         upload_interface(client)
+
 
 

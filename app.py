@@ -339,7 +339,7 @@ def warehouse_interface(client, creds):
                     with st.spinner("Generating Batch..."):
                         merger = PdfWriter()
                         # Use default settings since we hid the expander for cleanliness
-                        settings = {'rotate': True, 'scale': 0.95, 'x': -55, 'y': 90} 
+                        settings = {'rotate': True, 'scale': 0.95, 'x': -60, 'y': 95} 
                         
                         for idx, row in edited_df.iterrows():
                             sku = row['vendor_sku']
@@ -470,6 +470,7 @@ else:
         warehouse_interface(client, creds)
     else:
         upload_interface(client)
+
 
 
 

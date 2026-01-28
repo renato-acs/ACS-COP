@@ -339,7 +339,7 @@ def warehouse_interface(client, creds):
                     with st.spinner("Generating Batch..."):
                         merger = PdfWriter()
                         # Use default settings since we hid the expander for cleanliness
-                        settings = {'rotate': True, 'scale': 0.95, 'x': -5, 'y': 20} 
+                        settings = {'rotate': True, 'scale': 0.95, 'x': -5, 'y': 25} 
                         
                         for idx, row in edited_df.iterrows():
                             sku = row['vendor_sku']
@@ -363,7 +363,7 @@ def warehouse_interface(client, creds):
                 # SKU | Qty Input | Print Button
                 
                 # Settings hidden at bottom, define defaults here for single print
-                current_settings = {'rotate': True, 'scale': 0.95, 'x': -5, 'y': 20}
+                current_settings = {'rotate': True, 'scale': 0.95, 'x': -5, 'y': 25}
                 
                 # We use a container with a fixed height or scrollable if list is long? 
                 # Streamlit containers adapt.
@@ -470,6 +470,7 @@ else:
         warehouse_interface(client, creds)
     else:
         upload_interface(client)
+
 
 
 

@@ -37,7 +37,6 @@ USERS = {
 # --- SETUP ---
 st.set_page_config(page_title="Warehouse Portal", layout="wide", page_icon="📦")
 
-# Custom CSS for cleaner look (Hide Index, tight layout)
 st.markdown("""
 <style>
     .block-container {padding-top: 1rem;}
@@ -61,7 +60,7 @@ def get_gspread_client():
         st.error(f"Auth Error: {e}")
         return None, None
 
-# --- PDF ENGINE ---
+# --- PDF & SHEET HELPERS ---
 def truncate_text(text, max_len=55):
     text = str(text) if text else ""
     return text[:max_len] + "..." if len(text) > max_len else text
@@ -81,17 +80,37 @@ def export_sheet_to_pdf(sheet_id, sheet_gid, creds, fit=True):
     resp = requests.get(url, params=params, headers=headers)
     return resp.content if resp.status_code == 200 else None
 
-def show_pdf_preview(pdf_bytes):
-    """Shows a preview, but we rely on Download Button for the file."""
-    base64_pdf = base64.b64encode(pdf_bytes).decode('utf-8')
-    pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="400" type="application/pdf"></iframe>'
-    st.markdown(pdf_display, unsafe_allow_html=True)
+def set_rows_visibility(spreadsheet, worksheet_id, start_row, end_row, hide=True):
+    """
+    Hides/Shows rows to make the PDF look clean.
+    start_row: 1-based index (inclusive)
+    end_row: 1-based index (exclusive in API logic, but we treat as 'up to')
+    """
+    body = {
+        "requests": [
+            {
+                "updateDimensionProperties": {
+                    "range": {
+                        "sheetId": worksheet_id,
+                        "dimension": "ROWS",
+                        "startIndex": start_row - 1, # API is 0-based
+                        "endIndex": end_row
+                    },
+                    "properties": {
+                        "hiddenByUser": hide
+                    },
+                    "fields": "hiddenByUser"
+                }
+            }
+        ]
+    }
+    spreadsheet.batch_update(body)
 
 # --- HEADER / NAV ---
 def top_bar(title):
     c1, c2, c3 = st.columns([0.2, 0.6, 0.2])
     with c1:
-        st.image("https://cdn-icons-png.flaticon.com/512/2821/2821898.png", width=40) # Simple Icon
+        st.image("https://cdn-icons-png.flaticon.com/512/2821/2821898.png", width=40)
     with c2:
         st.markdown(f"### {title}")
     with c3:
@@ -108,13 +127,11 @@ def top_bar(title):
 # --- LOGIC ---
 
 def generate_single_label_pdf(item_row, label_qty, creds, client, settings):
-    """Helper to generate ONE label PDF (to be merged later)."""
     lbl_sh = client.open_by_key(LABEL_TEMPLATE_ID)
     lbl_ws = lbl_sh.worksheet("ItemLabel")
     
     desc_clean = truncate_text(item_row.get('description', ''), 55)
     
-    # Update Sheet (No more B9/D9 count logic)
     updates = [
         {'range': 'C3', 'values': [[str(item_row.get('customer_sku', ''))]]},
         {'range': 'B5', 'values': [[desc_clean]]},
@@ -123,32 +140,24 @@ def generate_single_label_pdf(item_row, label_qty, creds, client, settings):
         {'range': 'F7', 'values': [[label_qty]]}
     ]
     lbl_ws.batch_update(updates)
-    time.sleep(0.8) # Wait for Google to save
+    time.sleep(0.8)
     
     pdf_raw = export_sheet_to_pdf(LABEL_TEMPLATE_ID, lbl_ws.id, creds, fit=False)
     
     if pdf_raw:
-        # Process Geometry (Crop/Rotate)
         reader = PdfReader(BytesIO(pdf_raw))
         page = reader.pages[0]
-        
         op = Transformation().scale(sx=settings['scale'], sy=settings['scale']).translate(tx=settings['x'], ty=settings['y'])
         page.add_transformation(op)
-        
-        # Crop to 6x4 inches (432x288 pts)
         page.mediabox.lower_left = (0, page.mediabox.top - 288) 
         page.mediabox.upper_right = (432, page.mediabox.top)
-        
-        if settings['rotate']:
-            page.rotate(90)
-            
+        if settings['rotate']: page.rotate(90)
         return page
     return None
 
 def warehouse_interface(client, creds):
     top_bar("Warehouse Control Center")
     
-    # Load Data
     @st.cache_data(ttl=60)
     def load_data():
         try:
@@ -165,17 +174,14 @@ def warehouse_interface(client, creds):
         st.info("No orders found.")
         return
         
-    # --- VIEW 1: DASHBOARD (Interactive Table) ---
+    # --- DASHBOARD ---
     if "selected_order" not in st.session_state:
         st.session_state.selected_order = None
 
     if st.session_state.selected_order is None:
-        # Filter Box
         filter_txt = st.text_input("🔎 Quick Filter (Order # or Customer)", placeholder="Type to filter list...")
         
-        # Prep Table
         view_df = df[['order_num', 'po_num', 'customer_name', 'vendor_sku', 'ordered_qty']].copy()
-        # Group to remove duplicates
         grouped = view_df.groupby(['order_num', 'po_num', 'customer_name']).agg({
             'vendor_sku': 'count',
             'ordered_qty': 'sum'
@@ -188,24 +194,15 @@ def warehouse_interface(client, creds):
             ]
 
         st.info("👆 Double-click a row to open the order.")
+        event = st.dataframe(grouped, use_container_width=True, hide_index=True, selection_mode="single-row", on_select="rerun")
         
-        # INTERACTIVE TABLE
-        event = st.dataframe(
-            grouped,
-            use_container_width=True,
-            hide_index=True,
-            selection_mode="single-row",
-            on_select="rerun"
-        )
-        
-        # Handle Selection
         if len(event.selection.rows) > 0:
             selected_row_idx = event.selection.rows[0]
             order_id = grouped.iloc[selected_row_idx]['order_num']
             st.session_state.selected_order = str(order_id)
             st.rerun()
 
-    # --- VIEW 2: ORDER DETAILS ---
+    # --- ORDER DETAILS ---
     else:
         order_id = st.session_state.selected_order
         order_data = df[df['order_num'].astype(str) == str(order_id)].copy()
@@ -217,7 +214,6 @@ def warehouse_interface(client, creds):
             
         header = order_data.iloc[0]
 
-        # Order Header
         c1, c2 = st.columns([0.1, 0.9])
         with c1:
             if st.button("⬅️ Back"):
@@ -229,20 +225,13 @@ def warehouse_interface(client, creds):
 
         st.divider()
 
-        # Layout: Table (Left) | Actions (Right)
         col_table, col_actions = st.columns([2, 1])
 
-        # 1. CLEAN TABLE
         with col_table:
             st.subheader("Items")
-            # Create a clean view for the user
             display_df = order_data[['vendor_sku', 'description', 'ordered_qty', 'customer_sku']].copy()
-            # We keep customer_sku in data for logic, but we can hide it in display if needed. 
-            # User asked to remove it from view.
+            display_df['shipped_qty'] = display_df['ordered_qty']
             
-            display_df['shipped_qty'] = display_df['ordered_qty'] # Default
-            
-            # Using data_editor but configuring visible columns
             edited_df = st.data_editor(
                 display_df,
                 column_config={
@@ -250,18 +239,15 @@ def warehouse_interface(client, creds):
                     "description": st.column_config.TextColumn("Description", disabled=True, width="medium"),
                     "ordered_qty": st.column_config.NumberColumn("Ord", disabled=True, width="small"),
                     "shipped_qty": st.column_config.NumberColumn("Ship", min_value=0, width="small"),
-                    "customer_sku": None # Hides this column!
+                    "customer_sku": None
                 },
                 use_container_width=True,
-                hide_index=True, # Hides the "0, 1, 2" column
+                hide_index=True,
                 key=f"editor_{order_id}"
             )
 
-        # 2. ACTION PANEL
         with col_actions:
             st.subheader("Actions")
-            
-            # --- PRINTER SETTINGS (Global) ---
             with st.expander("⚙️ Printer Settings (Zebra)"):
                 p_rotate = st.checkbox("Rotate 90°", value=True)
                 p_scale = st.slider("Scale", 0.5, 1.2, 0.95, 0.05)
@@ -271,52 +257,47 @@ def warehouse_interface(client, creds):
 
             tab_single, tab_batch, tab_slip = st.tabs(["🏷️ Single Label", "📦 Batch Labels", "📄 Packing Slip"])
             
-            # A. SINGLE ITEM LABEL
             with tab_single:
                 item_sku = st.selectbox("Select Item:", edited_df['vendor_sku'].unique())
                 item_row = order_data[order_data['vendor_sku'] == item_sku].iloc[0]
                 qty_box = st.number_input("Qty on Label", value=int(item_row.get('ordered_qty', 1)))
-                
                 if st.button(f"Print '{item_sku}'"):
                     with st.spinner("Generating PDF..."):
                         merger = PdfWriter()
                         page = generate_single_label_pdf(item_row, qty_box, creds, client, settings)
                         if page: merger.add_page(page)
-                        
                         out = BytesIO()
                         merger.write(out)
                         st.download_button("⬇️ Download Label", out.getvalue(), f"Label_{item_sku}.pdf", mime="application/pdf")
 
-            # B. BATCH LABELS (ALL)
             with tab_batch:
                 st.info("Generates one PDF with labels for EVERY item in this order.")
                 if st.button("🖨️ Print ALL Labels", type="primary"):
-                    with st.spinner("Processing Batch... this may take a moment..."):
+                    with st.spinner("Processing Batch..."):
                         merger = PdfWriter()
-                        # Iterate through the edited DF to get current items
                         for idx, row in edited_df.iterrows():
-                            # Find original data for this SKU
                             sku = row['vendor_sku']
                             full_row = order_data[order_data['vendor_sku'] == sku].iloc[0]
-                            qty = row['ordered_qty'] # Default to ordered qty for label
-                            
+                            qty = row['ordered_qty']
                             page = generate_single_label_pdf(full_row, qty, creds, client, settings)
                             if page: merger.add_page(page)
-                        
                         out = BytesIO()
                         merger.write(out)
                         st.success("Batch Ready!")
                         st.download_button("⬇️ Download Batch PDF", out.getvalue(), f"Batch_Labels_{order_id}.pdf", mime="application/pdf")
 
-            # C. PACKING SLIP
             with tab_slip:
                 method = st.radio("Ship Method", ["Small Parcel", "LTL"])
                 if st.button("Generate Slip"):
-                    with st.spinner("Creating Slip..."):
+                    with st.spinner("Cleaning & Creating Slip..."):
                         ps_sh = client.open_by_key(PACKING_SLIP_ID)
                         ps_ws = ps_sh.worksheet("Template")
                         
-                        # Update Header
+                        # 1. UNHIDE ALL ROWS FIRST (Reset)
+                        # We unhide rows 19 to 100 to make sure we can write data
+                        set_rows_visibility(ps_sh, ps_ws.id, 19, 100, hide=False)
+
+                        # 2. Update Header
                         updates = [
                             {'range': 'B11', 'values': [[str(header.get('customer_name', ''))]]},
                             {'range': 'B12', 'values': [[str(header.get('address_1', ''))]]},
@@ -328,9 +309,11 @@ def warehouse_interface(client, creds):
                         ]
                         ps_ws.batch_update(updates)
                         
-                        # Update Lines
+                        # 3. Update Lines
                         final_items = edited_df[edited_df['shipped_qty'] > 0]
-                        ps_ws.batch_clear(["B19:H100"])
+                        ps_ws.batch_clear(["B19:H100"]) # Clear old data
+                        
+                        num_lines = 0
                         if not final_items.empty:
                             rows = []
                             for _, row in final_items.iterrows():
@@ -342,7 +325,16 @@ def warehouse_interface(client, creds):
                                     truncate_text(row['description'], 55)
                                 ])
                             ps_ws.update(range_name="B19", values=rows)
+                            num_lines = len(rows)
+
+                        # 4. HIDE EMPTY ROWS (The Cleanup)
+                        # Start hiding from the row AFTER the last item
+                        # Row 19 is the start. If 1 item, we keep row 19. Hide row 20.
+                        start_hide_row = 19 + num_lines 
+                        # Hide from there down to 100 (or 200 to be safe)
+                        set_rows_visibility(ps_sh, ps_ws.id, start_hide_row, 150, hide=True)
                         
+                        # 5. Export
                         pdf_bytes = export_sheet_to_pdf(PACKING_SLIP_ID, ps_ws.id, creds)
                         if pdf_bytes:
                             st.download_button("⬇️ Download Slip", pdf_bytes, f"PS_{order_id}.pdf", mime="application/pdf")
@@ -366,10 +358,7 @@ if not st.session_state["logged_in"]:
                 st.rerun()
             else: st.error("Invalid")
 else:
-    # Router
     if st.session_state["role"] == "manager":
-        # Admin Interface (Kept simple for brevity, insert your admin code here if needed)
-        # For now, just forwarding to warehouse or upload
         pg = st.sidebar.radio("Go to", ["Warehouse View", "Upload Data"])
         if pg == "Warehouse View": warehouse_interface(client, creds)
         else: st.write("Admin Upload Screen (Same as previous)")

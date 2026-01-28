@@ -39,8 +39,8 @@ SCOPES = [
 # --- USERS (Simple Auth) ---
 # Format: username: (password, role)
 USERS = {
-    "admin": ("admin123", "manager"),       # YOU (Can upload files)
-    "warehouse": ("packer2024", "packer")   # STAFF (Can only print)
+    "renato": ("RealMadrid15$", "manager"),       # YOU (Can upload files)
+    "warehouse": ("Bigwh$256", "packer")   # STAFF (Can only print)
 }
 
 # --- AUTHENTICATION & SETUP ---
@@ -419,3 +419,4 @@ else:
         else:
             # Staff only sees Warehouse View
             warehouse_interface(client, creds)
+

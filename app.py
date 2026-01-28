@@ -166,7 +166,7 @@ def generate_single_label_pdf(item_row, label_qty, creds, client, settings):
     lbl_ws.batch_update(updates)
     time.sleep(0.8)
     
-    pdf_raw = export_sheet_to_pdf(LABEL_TEMPLATE_ID, lbl_ws.id, creds, fit=False)
+    pdf_raw = export_sheet_to_pdf(LABEL_TEMPLATE_ID, lbl_ws.id, creds, fit=False, margin=0)
     
     if pdf_raw:
         reader = PdfReader(BytesIO(pdf_raw))
@@ -470,6 +470,7 @@ else:
         warehouse_interface(client, creds)
     else:
         upload_interface(client)
+
 
 
 

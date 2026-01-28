@@ -117,11 +117,15 @@ def truncate_text(text, max_len=55):
     text = str(text) if text else ""
     return text[:max_len] + "..." if len(text) > max_len else text
 
-def export_sheet_to_pdf(sheet_id, sheet_gid, creds, fit=True, margin=0.2):
+def export_sheet_to_pdf(sheet_id, sheet_gid, creds, fit=True, margin=0):
     url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export"
     params = {
-        "format": "pdf", "gid": sheet_gid, "portrait": "true",
-        "fitw": "true" if fit else "false", "gridlines": "false"
+        "format": "pdf", 
+        "gid": sheet_gid, 
+        "portrait": "true",
+        "fitw": "true" if fit else "false", 
+        "gridlines": "false",
+        # MARGINS CONTROL (Values in inches)
         "top_margin": str(margin),
         "bottom_margin": str(margin),
         "left_margin": str(margin),
@@ -447,7 +451,8 @@ def warehouse_interface(client, creds):
 
                         set_rows_visibility(ps_sh, ps_ws.id, 19 + num_lines, 150, hide=True)
                         
-                        pdf_bytes = export_sheet_to_pdf(PACKING_SLIP_ID, ps_ws.id, creds)
+                        # Inside the 'tab_slip' block:
+                        pdf_bytes = export_sheet_to_pdf(PACKING_SLIP_ID, ps_ws.id, creds, margin=0.25)
                         if pdf_bytes:
                             st.success("Slip Ready!")
                             st.download_button("⬇️ Download Slip", pdf_bytes, f"PS_{order_id}.pdf", mime="application/pdf", type="primary")
@@ -465,4 +470,5 @@ else:
         warehouse_interface(client, creds)
     else:
         upload_interface(client)
+
 

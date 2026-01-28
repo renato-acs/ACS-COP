@@ -5,7 +5,6 @@ from google.oauth2.service_account import Credentials
 from google.oauth2 import service_account
 import requests
 import time
-import base64
 from io import BytesIO
 from pypdf import PdfWriter, PdfReader, Transformation
 
@@ -35,10 +34,10 @@ st.set_page_config(page_title="Warehouse Portal", layout="wide", page_icon="📦
 # --- CUSTOM CSS ---
 st.markdown("""
 <style>
-    /* HIDE DEFAULT ELEMENTS */
+    /* HIDE DEFAULT STREAMLIT HEADER & FOOTER */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
-    header[data-testid="stHeader"] {display: none;}
+    header[data-testid="stHeader"] {display: none;} /* This hides the sidebar toggle too */
 
     /* LAYOUT */
     .block-container {padding-top: 1rem; padding-bottom: 5rem;}
@@ -54,10 +53,19 @@ st.markdown("""
         padding-bottom: 10px;
         border-bottom: 2px solid #f0f2f6;
     }
+    
+    /* NAV RADIO BUTTON STYLING */
+    div[role="radiogroup"] {
+        background-color: #f0f2f6;
+        padding: 10px;
+        border-radius: 8px;
+        display: flex;
+        justify-content: center;
+    }
 </style>
 """, unsafe_allow_html=True)
 
-# --- AUTH (SERVICE ACCOUNT ONLY) ---
+# --- AUTH ---
 @st.cache_resource
 def get_gspread_client():
     try:
@@ -365,9 +373,12 @@ client, creds = get_gspread_client()
 if not client:
     st.error("Authentication failed. Check your Streamlit Secrets.")
 else:
-    # SIDEBAR NAV
-    nav_option = st.sidebar.radio("Menu", ["📦 Warehouse Ops", "📤 Upload Data"])
-    
+    # --- TOP NAVIGATION BAR ---
+    # This replaces the sidebar. It is visible because it is in the main body.
+    # The default is "Warehouse Ops", so it always opens to orders.
+    nav_option = st.radio("Menu", ["📦 Warehouse Ops", "📤 Upload Data"], horizontal=True, label_visibility="collapsed")
+    st.write("") # Spacer
+
     if nav_option == "📦 Warehouse Ops":
         warehouse_interface(client, creds)
     else:

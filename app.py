@@ -5,6 +5,7 @@ from google.oauth2.service_account import Credentials
 from google.oauth2 import service_account
 import requests
 import time
+import base64
 from io import BytesIO
 from pypdf import PdfWriter, PdfReader, Transformation
 
@@ -13,29 +14,37 @@ SOURCE_SHEET_ID = "1nb8gE9i3GmxquG93hLX0a5Kn_GoGH1uCESdVxtXnkv0"
 LABEL_TEMPLATE_ID = "1fUuCsIumgRAmJEt-FvvaXrjDaVTT6FJtGz162ZYIwLY"
 PACKING_SLIP_ID = "1fr-Mjq0rkQadr-5nvaOK5YqyCo5Teye_wS4-P1UN7po"
 
-SCOPES = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
-
-USERS = {
-    "admin": ("admin123", "manager"),
-    "warehouse": ("packer2024", "packer")
+CSV_MAP = {
+    "Order Number": "order_num",
+    "PO Number": "po_num",
+    "CustomerName": "customer_name",
+    "Item": "vendor_sku",
+    "ItemDescription": "description",
+    "OrderedQty": "ordered_qty",
+    "Ship To Address 1": "address_1",
+    "Ship To Address 2": "address_2",
+    "Cust SKU": "customer_sku",
+    "Match Data for Address": "city_state_zip",
 }
+
+SCOPES = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
 
 # --- SETUP ---
 st.set_page_config(page_title="Warehouse Portal", layout="wide", page_icon="📦")
 
-# --- CUSTOM CSS FOR STICKY HEADER ---
+# --- CUSTOM CSS ---
 st.markdown("""
 <style>
-    /* Remove top padding to maximize space */
+    /* HIDE DEFAULT ELEMENTS */
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header[data-testid="stHeader"] {display: none;}
+
+    /* LAYOUT */
     .block-container {padding-top: 1rem; padding-bottom: 5rem;}
-    
-    /* Global Button Styling */
     button[kind="primary"] {width: 100%; border-radius: 6px;}
     
-    /* STICKY HEADER MAGIC
-       This targets the container with the "Back" button to make it stick.
-       Note: We wrap the header in a specific container structure in the code below.
-    */
+    /* STICKY HEADER MAGIC */
     div[data-testid="stVerticalBlock"] > div.element-container:has(div.sticky-marker) {
         position: sticky;
         top: 0;
@@ -48,7 +57,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- AUTH ---
+# --- AUTH (SERVICE ACCOUNT ONLY) ---
 @st.cache_resource
 def get_gspread_client():
     try:
@@ -63,7 +72,7 @@ def get_gspread_client():
         st.error(f"Auth Error: {e}")
         return None, None
 
-# --- PDF & SHEET HELPERS ---
+# --- HELPERS ---
 def truncate_text(text, max_len=55):
     text = str(text) if text else ""
     return text[:max_len] + "..." if len(text) > max_len else text
@@ -92,26 +101,6 @@ def set_rows_visibility(spreadsheet, worksheet_id, start_row, end_row, hide=True
         }}]
     }
     spreadsheet.batch_update(body)
-
-# --- NAVIGATION BAR (GLOBAL) ---
-def global_nav():
-    """Top bar visible on all screens"""
-    if st.session_state.get("logged_in"):
-        c1, c2, c3 = st.columns([0.1, 0.7, 0.2])
-        with c1:
-            st.write("🏭") # Simple Icon
-        with c3:
-            # Inline Logout
-            c_user, c_out = st.columns([2, 1])
-            with c_user:
-                st.write(f"**{st.session_state['username']}**")
-            with c_out:
-                if st.button("Exit", key="logout_top", help="Log Out"):
-                    st.session_state["logged_in"] = False
-                    st.rerun()
-        st.divider()
-
-# --- LOGIC ---
 
 def generate_single_label_pdf(item_row, label_qty, creds, client, settings):
     lbl_sh = client.open_by_key(LABEL_TEMPLATE_ID)
@@ -142,6 +131,39 @@ def generate_single_label_pdf(item_row, label_qty, creds, client, settings):
         return page
     return None
 
+# --- SCREEN 1: UPLOAD DATA ---
+def upload_interface(client):
+    st.title("📤 Upload Data")
+    st.info("Upload CSV files to overwrite the current open orders.")
+    
+    uploaded_files = st.file_uploader("Choose CSVs", accept_multiple_files=True, type="csv")
+    
+    if st.button("🚀 Process & Update Database", type="primary"):
+        if uploaded_files:
+            with st.spinner("Updating Database..."):
+                try:
+                    all_dfs = []
+                    for uploaded_file in uploaded_files:
+                        df = pd.read_csv(uploaded_file)
+                        df.columns = df.columns.str.strip()
+                        rename_map = {k: v for k, v in CSV_MAP.items() if k in df.columns}
+                        df = df.rename(columns=rename_map)
+                        valid_cols = [v for k, v in CSV_MAP.items() if v in df.columns]
+                        df = df[valid_cols]
+                        all_dfs.append(df)
+                    
+                    if all_dfs:
+                        final_df = pd.concat(all_dfs, ignore_index=True).fillna("")
+                        sh = client.open_by_key(SOURCE_SHEET_ID)
+                        ws = sh.worksheet("Open SO")
+                        ws.clear()
+                        ws.update(range_name="A1", values=[final_df.columns.values.tolist()])
+                        ws.update(range_name="A2", values=final_df.values.tolist())
+                        st.success(f"Uploaded {len(final_df)} lines!")
+                except Exception as e:
+                    st.error(f"Error: {e}")
+
+# --- SCREEN 2: WAREHOUSE OPS ---
 def warehouse_interface(client, creds):
     # Load Data
     @st.cache_data(ttl=60)
@@ -151,28 +173,26 @@ def warehouse_interface(client, creds):
             return pd.DataFrame(sh.worksheet("Open SO").get_all_records())
         except: return pd.DataFrame()
 
-    if st.sidebar.button("🔄 Refresh Data"):
-        st.cache_data.clear()
-        st.rerun()
-
     df = load_data()
     
-    # --- VIEW 1: DASHBOARD ---
+    # --- DASHBOARD VIEW ---
     if "selected_order" not in st.session_state:
         st.session_state.selected_order = None
 
     if st.session_state.selected_order is None:
-        global_nav() # Show Nav
-        st.markdown("### 📋 Open Orders")
+        c1, c2 = st.columns([0.8, 0.2])
+        with c1: st.title("📋 Open Orders")
+        with c2: 
+            if st.button("🔄 Refresh"):
+                st.cache_data.clear()
+                st.rerun()
         
         if df.empty:
             st.info("No active orders found.")
             return
 
-        # Filter
         filter_txt = st.text_input("Find Order...", placeholder="Type Order #, PO, or Customer Name")
         
-        # Prepare Data
         view_df = df[['order_num', 'po_num', 'customer_name', 'vendor_sku', 'ordered_qty']].copy()
         grouped = view_df.groupby(['order_num', 'po_num', 'customer_name']).agg({
             'vendor_sku': 'count',
@@ -186,10 +206,8 @@ def warehouse_interface(client, creds):
                 grouped['po_num'].astype(str).str.contains(filter_txt, case=False)
             ]
 
-        # Simpler Instruction
         st.caption("Click any row below to open the order.")
         
-        # Selection Table
         event = st.dataframe(
             grouped,
             use_container_width=True,
@@ -205,7 +223,7 @@ def warehouse_interface(client, creds):
             st.session_state.selected_order = str(order_id)
             st.rerun()
 
-    # --- VIEW 2: ORDER SCREEN ---
+    # --- ORDER DETAIL VIEW ---
     else:
         order_id = st.session_state.selected_order
         order_data = df[df['order_num'].astype(str) == str(order_id)].copy()
@@ -217,16 +235,10 @@ def warehouse_interface(client, creds):
             
         header = order_data.iloc[0]
 
-        # === STICKY HEADER SECTION ===
-        # We put this inside a container. The CSS above targets this specific structure.
-        # The hidden div 'sticky-marker' helps our CSS find this container.
+        # === STICKY HEADER ===
         with st.container():
             st.markdown('<div class="sticky-marker"></div>', unsafe_allow_html=True)
             
-            # Global Nav is INSIDE the sticky header now so it stays accessible
-            global_nav() 
-            
-            # Order Nav
             c1, c2 = st.columns([0.15, 0.85])
             with c1:
                 if st.button("⬅️ BACK", key="back_btn", type="secondary"):
@@ -237,11 +249,10 @@ def warehouse_interface(client, creds):
                 st.markdown(f"**SO:** {header['order_num']} &nbsp; | &nbsp; **PO:** {header['po_num']}", unsafe_allow_html=True)
         # === END STICKY HEADER ===
 
-        # Main Layout
-        st.write("") # Spacer
+        st.write("") 
         col_table, col_actions = st.columns([2, 1])
 
-        # 1. TABLE (Left)
+        # 1. TABLE
         with col_table:
             st.subheader("Items")
             display_df = order_data[['vendor_sku', 'description', 'ordered_qty', 'customer_sku']].copy()
@@ -254,7 +265,7 @@ def warehouse_interface(client, creds):
                     "description": st.column_config.TextColumn("Description", disabled=True),
                     "ordered_qty": st.column_config.NumberColumn("Ord", disabled=True, width="small"),
                     "shipped_qty": st.column_config.NumberColumn("Ship", min_value=0, width="small"),
-                    "customer_sku": None # Hidden
+                    "customer_sku": None 
                 },
                 use_container_width=True,
                 hide_index=True,
@@ -262,14 +273,12 @@ def warehouse_interface(client, creds):
                 height=500
             )
 
-        # 2. ACTIONS (Right)
+        # 2. ACTIONS
         with col_actions:
             st.subheader("Print")
             
-            # Simple Tabs
             tab_single, tab_batch, tab_slip = st.tabs(["Single Label", "All Labels", "Packing Slip"])
             
-            # Printer Settings Expander (Kept out of the way)
             with st.expander("⚙️ Printer Settings"):
                 p_rotate = st.checkbox("Rotate 90°", value=True)
                 p_scale = st.slider("Scale", 0.5, 1.2, 0.95, 0.05)
@@ -292,7 +301,7 @@ def warehouse_interface(client, creds):
                         st.download_button("⬇️ Download PDF", out.getvalue(), f"Label_{item_sku}.pdf", mime="application/pdf", type="primary")
 
             with tab_batch:
-                st.info("One PDF containing labels for ALL items.")
+                st.info("Labels for ALL items.")
                 if st.button("Generate ALL Labels", key="btn_batch"):
                     with st.spinner("Processing Batch..."):
                         merger = PdfWriter()
@@ -350,28 +359,16 @@ def warehouse_interface(client, creds):
                         if pdf_bytes:
                             st.download_button("⬇️ Download Slip", pdf_bytes, f"PS_{order_id}.pdf", mime="application/pdf", type="primary")
 
-# --- MAIN ENTRY ---
-if "logged_in" not in st.session_state:
-    st.session_state["logged_in"] = False
-
+# --- MAIN EXECUTION ---
 client, creds = get_gspread_client()
 
-if not st.session_state["logged_in"]:
-    st.title("🔐 Login")
-    with st.form("login"):
-        u = st.text_input("Username")
-        p = st.text_input("Password", type="password")
-        if st.form_submit_button("Sign In"):
-            if u in USERS and USERS[u][0] == p:
-                st.session_state["logged_in"] = True
-                st.session_state["username"] = u
-                st.session_state["role"] = USERS[u][1]
-                st.rerun()
-            else: st.error("Invalid credentials")
+if not client:
+    st.error("Authentication failed. Check your Streamlit Secrets.")
 else:
-    if st.session_state["role"] == "manager":
-        pg = st.sidebar.radio("Navigate", ["Warehouse View", "Upload Data"])
-        if pg == "Warehouse View": warehouse_interface(client, creds)
-        else: st.write("Admin Upload Screen")
-    else:
+    # SIDEBAR NAV
+    nav_option = st.sidebar.radio("Menu", ["📦 Warehouse Ops", "📤 Upload Data"])
+    
+    if nav_option == "📦 Warehouse Ops":
         warehouse_interface(client, creds)
+    else:
+        upload_interface(client)

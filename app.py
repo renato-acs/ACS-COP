@@ -282,8 +282,8 @@ def warehouse_interface(client, creds):
             with st.expander("⚙️ Printer Settings"):
                 p_rotate = st.checkbox("Rotate 90°", value=True)
                 p_scale = st.slider("Scale", 0.5, 1.2, 0.95, 0.05)
-                p_x = st.slider("Vertical Offset", -100, 100, -20, 5)
-                p_y = st.slider("Horizontal Offset", -100, 100, 0, 5)
+                p_x = st.slider("Vertical Offset", -100, 100, -53, 5)
+                p_y = st.slider("Horizontal Offset", -100, 100, 80, 5)
                 settings = {'rotate': p_rotate, 'scale': p_scale, 'x': p_x, 'y': p_y}
 
             with tab_single:

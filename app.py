@@ -31,36 +31,68 @@ SCOPES = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapi
 # --- SETUP ---
 st.set_page_config(page_title="Warehouse Portal", layout="wide", page_icon="📦")
 
-# --- CUSTOM CSS ---
+# --- CUSTOM CSS (ACCESSIBILITY & STYLING) ---
 st.markdown("""
 <style>
     /* HIDE DEFAULT STREAMLIT HEADER & FOOTER */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
-    header[data-testid="stHeader"] {display: none;} /* This hides the sidebar toggle too */
+    header[data-testid="stHeader"] {display: none;}
 
-    /* LAYOUT */
+    /* LAYOUT & SPACING */
     .block-container {padding-top: 1rem; padding-bottom: 5rem;}
-    button[kind="primary"] {width: 100%; border-radius: 6px;}
     
-    /* STICKY HEADER MAGIC */
+    /* GLOBAL FONT SIZE INCREASE (Accessibility) */
+    html, body, [class*="css"] {
+        font-size: 18px !important; 
+    }
+    
+    /* BUTTON STYLING */
+    button[kind="primary"] {
+        width: 100%; 
+        border-radius: 6px; 
+        font-weight: bold; 
+        font-size: 18px !important;
+        padding: 0.5rem 1rem;
+    }
+    button[kind="secondary"] {
+        width: 100%;
+        border-radius: 6px;
+    }
+
+    /* STICKY HEADER */
     div[data-testid="stVerticalBlock"] > div.element-container:has(div.sticky-marker) {
         position: sticky;
         top: 0;
         z-index: 999;
         background-color: white;
-        padding-top: 10px;
-        padding-bottom: 10px;
-        border-bottom: 2px solid #f0f2f6;
+        padding-top: 15px;
+        padding-bottom: 15px;
+        border-bottom: 3px solid #f0f2f6;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
     }
     
-    /* NAV RADIO BUTTON STYLING */
+    /* DATA EDITOR / TABLE STYLING */
+    div[data-testid="stDataEditor"] table {
+        font-size: 18px !important;
+    }
+    
+    /* ALTERNATING ROW COLORS FOR TABLES */
+    div[data-testid="stDataEditor"] tr:nth-of-type(even) {
+        background-color: #f9f9f9;
+    }
+    div[data-testid="stDataEditor"] tr:hover {
+        background-color: #e6f7ff;
+    }
+
+    /* NAV BAR */
     div[role="radiogroup"] {
         background-color: #f0f2f6;
         padding: 10px;
         border-radius: 8px;
         display: flex;
         justify-content: center;
+        margin-bottom: 20px;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -173,7 +205,6 @@ def upload_interface(client):
 
 # --- SCREEN 2: WAREHOUSE OPS ---
 def warehouse_interface(client, creds):
-    # Load Data
     @st.cache_data(ttl=60)
     def load_data():
         try:
@@ -253,80 +284,128 @@ def warehouse_interface(client, creds):
                     st.session_state.selected_order = None
                     st.rerun()
             with c2:
-                st.markdown(f"### {header['customer_name']}")
-                st.markdown(f"**SO:** {header['order_num']} &nbsp; | &nbsp; **PO:** {header['po_num']}", unsafe_allow_html=True)
+                # Big bold header for older users
+                st.markdown(f"## {header['customer_name']}")
+                st.markdown(f"<h5>SO: {header['order_num']} &nbsp;|&nbsp; PO: {header['po_num']}</h5>", unsafe_allow_html=True)
         # === END STICKY HEADER ===
 
         st.write("") 
-        col_table, col_actions = st.columns([2, 1])
+        
+        # Split layout: 70% Table, 30% Print Controls
+        col_table, col_actions = st.columns([0.65, 0.35])
 
-        # 1. TABLE
+        # 1. TABLE (Left)
         with col_table:
-            st.subheader("Items")
+            st.subheader("Items & Shipping")
+            
+            # Reorder columns: Ship Qty FIRST, then SKU, Desc, Ordered
             display_df = order_data[['vendor_sku', 'description', 'ordered_qty', 'customer_sku']].copy()
             display_df['shipped_qty'] = display_df['ordered_qty']
+            
+            # Rearrange for visibility: Ship | SKU | Desc | Ord
+            display_df = display_df[['shipped_qty', 'vendor_sku', 'description', 'ordered_qty']]
             
             edited_df = st.data_editor(
                 display_df,
                 column_config={
-                    "vendor_sku": st.column_config.TextColumn("SKU", disabled=True),
+                    "shipped_qty": st.column_config.NumberColumn("✏️ SHIP QTY", min_value=0, width="small", help="Edit this to change quantity on Packing Slip"),
+                    "vendor_sku": st.column_config.TextColumn("SKU", disabled=True, width="medium"),
                     "description": st.column_config.TextColumn("Description", disabled=True),
                     "ordered_qty": st.column_config.NumberColumn("Ord", disabled=True, width="small"),
-                    "shipped_qty": st.column_config.NumberColumn("Ship", min_value=0, width="small"),
-                    "customer_sku": None 
                 },
                 use_container_width=True,
                 hide_index=True,
                 key=f"editor_{order_id}",
-                height=500
+                height=600
             )
 
-        # 2. ACTIONS
+        # 2. ACTIONS (Right)
         with col_actions:
-            st.subheader("Print")
+            # We use tabs to separate Labels vs Packing Slip
+            tab_labels, tab_slip = st.tabs(["🏷️ LABELS", "📄 PACKING SLIP"])
             
-            tab_single, tab_batch, tab_slip = st.tabs(["Single Label", "All Labels", "Packing Slip"])
-            
-            with st.expander("⚙️ Printer Settings"):
-                p_rotate = st.checkbox("Rotate 90°", value=True)
-                p_scale = st.slider("Scale", 0.5, 1.2, 0.95, 0.05)
-                p_x = st.slider("Vertical Offset", -100, 100, -53, 5)
-                p_y = st.slider("Horizontal Offset", -100, 100, 80, 5)
-                settings = {'rotate': p_rotate, 'scale': p_scale, 'x': p_x, 'y': p_y}
-
-            with tab_single:
-                item_sku = st.selectbox("Select Item:", edited_df['vendor_sku'].unique())
-                item_row = order_data[order_data['vendor_sku'] == item_sku].iloc[0]
-                qty_box = st.number_input("Qty on Label", value=int(item_row.get('ordered_qty', 1)))
-                
-                if st.button(f"Generate '{item_sku}' Label", key="btn_single"):
-                    with st.spinner("Processing..."):
+            # --- TAB 1: LABELS (The "Mini Table" Interface) ---
+            with tab_labels:
+                # Top "Print All" Button
+                if st.button("🖨️ PRINT ALL LABELS", type="primary", key="print_all_top"):
+                    with st.spinner("Generating Batch..."):
                         merger = PdfWriter()
-                        page = generate_single_label_pdf(item_row, qty_box, creds, client, settings)
-                        if page: merger.add_page(page)
-                        out = BytesIO()
-                        merger.write(out)
-                        st.download_button("⬇️ Download PDF", out.getvalue(), f"Label_{item_sku}.pdf", mime="application/pdf", type="primary")
-
-            with tab_batch:
-                st.info("Labels for ALL items.")
-                if st.button("Generate ALL Labels", key="btn_batch"):
-                    with st.spinner("Processing Batch..."):
-                        merger = PdfWriter()
+                        # Use default settings since we hid the expander for cleanliness
+                        settings = {'rotate': True, 'scale': 0.95, 'x': -20, 'y': 0} 
+                        
                         for idx, row in edited_df.iterrows():
                             sku = row['vendor_sku']
                             full_row = order_data[order_data['vendor_sku'] == sku].iloc[0]
-                            qty = row['ordered_qty']
-                            page = generate_single_label_pdf(full_row, qty, creds, client, settings)
-                            if page: merger.add_page(page)
+                            # Use the qty from the main table (Ship Qty) or Ordered Qty? 
+                            # Usually label qty = shipped qty. Let's use the editable ship qty from main table.
+                            qty = row['shipped_qty'] 
+                            if qty > 0:
+                                page = generate_single_label_pdf(full_row, qty, creds, client, settings)
+                                if page: merger.add_page(page)
+                        
                         out = BytesIO()
                         merger.write(out)
-                        st.success("Ready!")
                         st.download_button("⬇️ Download Batch PDF", out.getvalue(), f"Batch_{order_id}.pdf", mime="application/pdf", type="primary")
+                
+                st.divider()
+                st.markdown("##### Individual Items")
 
+                # The "Mini Table" Loop
+                # We iterate through the visible items and create a row for each
+                # SKU | Qty Input | Print Button
+                
+                # Settings hidden at bottom, define defaults here for single print
+                current_settings = {'rotate': True, 'scale': 0.95, 'x': -20, 'y': 0}
+                
+                # We use a container with a fixed height or scrollable if list is long? 
+                # Streamlit containers adapt.
+                
+                for idx, row in edited_df.iterrows():
+                    sku = row['vendor_sku']
+                    # Visual Row
+                    with st.container():
+                        c_sku, c_qty, c_btn = st.columns([0.4, 0.3, 0.3])
+                        
+                        # SKU (Bold)
+                        with c_sku:
+                            st.markdown(f"**{sku}**")
+                        
+                        # Qty Input (Unique key per item)
+                        with c_qty:
+                            # We default this input to the Shipped Qty from the main table
+                            qty_val = st.number_input("Qty", value=int(row['shipped_qty']), min_value=1, key=f"qty_{sku}_{order_id}", label_visibility="collapsed")
+                        
+                        # Print Button
+                        with c_btn:
+                            if st.button("Print", key=f"btn_{sku}_{order_id}"):
+                                with st.spinner("..."):
+                                    item_row = order_data[order_data['vendor_sku'] == sku].iloc[0]
+                                    merger = PdfWriter()
+                                    page = generate_single_label_pdf(item_row, qty_val, creds, client, current_settings)
+                                    if page: merger.add_page(page)
+                                    out = BytesIO()
+                                    merger.write(out)
+                                    # Create a unique download button that appears just for this item
+                                    st.session_state[f"pdf_{sku}"] = out.getvalue()
+
+                        # Show download button if generated
+                        if f"pdf_{sku}" in st.session_state:
+                            st.download_button("⬇️", st.session_state[f"pdf_{sku}"], f"Label_{sku}.pdf", mime="application/pdf", key=f"dl_{sku}")
+                        
+                        st.divider()
+
+                # Printer Settings (Collapsed at bottom)
+                with st.expander("⚙️ Settings"):
+                    p_rotate = st.checkbox("Rotate 90°", value=True)
+                    p_scale = st.slider("Scale", 0.5, 1.2, 0.95, 0.05)
+                    st.caption("Adjust only if labels are misaligned.")
+
+            # --- TAB 2: PACKING SLIP ---
             with tab_slip:
-                method = st.radio("Method", ["Small Parcel", "LTL"])
-                if st.button("Generate Slip", key="btn_slip"):
+                st.info("Generates slip using 'Ship Qty' from the table.")
+                method = st.radio("Ship Method", ["Small Parcel", "LTL"])
+                
+                if st.button("📄 Generate Packing Slip", type="primary", key="btn_slip_main"):
                     with st.spinner("Creating Slip..."):
                         ps_sh = client.open_by_key(PACKING_SLIP_ID)
                         ps_ws = ps_sh.worksheet("Template")
@@ -344,6 +423,7 @@ def warehouse_interface(client, creds):
                         ]
                         ps_ws.batch_update(updates)
                         
+                        # Use data from editor
                         final_items = edited_df[edited_df['shipped_qty'] > 0]
                         ps_ws.batch_clear(["B19:H100"])
                         
@@ -352,7 +432,7 @@ def warehouse_interface(client, creds):
                             rows = []
                             for _, row in final_items.iterrows():
                                 rows.append([
-                                    str(row['customer_sku']),
+                                    str(order_data[order_data['vendor_sku']==row['vendor_sku']].iloc[0]['customer_sku']), # Retrieve hidden customer sku
                                     str(row['vendor_sku']),
                                     int(row['ordered_qty']),
                                     int(row['shipped_qty']),
@@ -365,6 +445,7 @@ def warehouse_interface(client, creds):
                         
                         pdf_bytes = export_sheet_to_pdf(PACKING_SLIP_ID, ps_ws.id, creds)
                         if pdf_bytes:
+                            st.success("Slip Ready!")
                             st.download_button("⬇️ Download Slip", pdf_bytes, f"PS_{order_id}.pdf", mime="application/pdf", type="primary")
 
 # --- MAIN EXECUTION ---
@@ -373,11 +454,8 @@ client, creds = get_gspread_client()
 if not client:
     st.error("Authentication failed. Check your Streamlit Secrets.")
 else:
-    # --- TOP NAVIGATION BAR ---
-    # This replaces the sidebar. It is visible because it is in the main body.
-    # The default is "Warehouse Ops", so it always opens to orders.
     nav_option = st.radio("Menu", ["📦 Warehouse Ops", "📤 Upload Data"], horizontal=True, label_visibility="collapsed")
-    st.write("") # Spacer
+    st.write("") 
 
     if nav_option == "📦 Warehouse Ops":
         warehouse_interface(client, creds)

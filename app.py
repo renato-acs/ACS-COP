@@ -332,58 +332,58 @@ def warehouse_interface(client, creds):
             # We use tabs to separate Labels vs Packing Slip
             tab_labels, tab_slip = st.tabs(["🏷️ LABELS", "📄 PACKING SLIP"])
             
-        # --- TAB 1: LABELS ---
-        with tab_labels:
-            # Top "Print All" Button
-            if st.button("🖨️ PRINT ALL LABELS", type="primary", key="print_all_top"):
-                
-                # 1. THE MESSAGE: We update the spinner text here
-                msg = "Processing your request. This might take a few minutes depending on the number of items..."
-                
-                with st.spinner(msg):
-                    merger = PdfWriter()
-                    settings = {'rotate': True, 'scale': 0.95, 'x': -5, 'y': 25} 
+            # --- TAB 1: LABELS ---
+            with tab_labels:
+                # Top "Print All" Button
+                if st.button("🖨️ PRINT ALL LABELS", type="primary", key="print_all_top"):
                     
-                    # Filter first so we know exactly how many items we are processing
-                    items_to_process = edited_df[edited_df['shipped_qty'] > 0]
-                    total_items = len(items_to_process)
+                    # 1. THE MESSAGE: We update the spinner text here
+                    msg = "Processing your request. This might take a few minutes depending on the number of items..."
                     
-                    # 2. PROGRESS BAR: Initialize it
-                    progress_bar = st.progress(0)
-                    
-                    # Loop with enumeration (i) to track progress
-                    for i, (idx, row) in enumerate(items_to_process.iterrows()):
-                        sku = row['vendor_sku']
-                        full_row = order_data[order_data['vendor_sku'] == sku].iloc[0]
-                        qty = row['shipped_qty'] 
+                    with st.spinner(msg):
+                        merger = PdfWriter()
+                        settings = {'rotate': True, 'scale': 0.95, 'x': -5, 'y': 25} 
                         
-                        if qty > 0:
-                            page = generate_single_label_pdf(full_row, qty, creds, client, settings)
-                            if page: merger.add_page(page)
+                        # Filter first so we know exactly how many items we are processing
+                        items_to_process = edited_df[edited_df['shipped_qty'] > 0]
+                        total_items = len(items_to_process)
+                        
+                        # 2. PROGRESS BAR: Initialize it
+                        progress_bar = st.progress(0)
+                        
+                        # Loop with enumeration (i) to track progress
+                        for i, (idx, row) in enumerate(items_to_process.iterrows()):
+                            sku = row['vendor_sku']
+                            full_row = order_data[order_data['vendor_sku'] == sku].iloc[0]
+                            qty = row['shipped_qty'] 
                             
-                            # 3. THE RATE LIMIT FIX: Pause for 3 seconds between items
-                            time.sleep(3)
+                            if qty > 0:
+                                page = generate_single_label_pdf(full_row, qty, creds, client, settings)
+                                if page: merger.add_page(page)
+                                
+                                # 3. THE RATE LIMIT FIX: Pause for 3 seconds between items
+                                time.sleep(3)
+                            
+                            # Update the progress bar (e.g., 1/10, 2/10...)
+                            current_progress = (i + 1) / total_items
+                            progress_bar.progress(current_progress)
+            
+                        # Clean up: Remove progress bar when finished
+                        progress_bar.empty()
+            
+                        # Finalize PDF
+                        out = BytesIO()
+                        merger.write(out)
                         
-                        # Update the progress bar (e.g., 1/10, 2/10...)
-                        current_progress = (i + 1) / total_items
-                        progress_bar.progress(current_progress)
-        
-                    # Clean up: Remove progress bar when finished
-                    progress_bar.empty()
-        
-                    # Finalize PDF
-                    out = BytesIO()
-                    merger.write(out)
-                    
-                    # Success!
-                    st.success("Batch generation complete!")
-                    st.download_button(
-                        "⬇️ Download Batch PDF", 
-                        out.getvalue(), 
-                        f"Batch_{order_id}.pdf", 
-                        mime="application/pdf", 
-                        type="primary"
-                    )
+                        # Success!
+                        st.success("Batch generation complete!")
+                        st.download_button(
+                            "⬇️ Download Batch PDF", 
+                            out.getvalue(), 
+                            f"Batch_{order_id}.pdf", 
+                            mime="application/pdf", 
+                            type="primary"
+                        )
                 
                 st.divider()
                 st.markdown("##### Individual Items")
@@ -492,5 +492,6 @@ else:
         warehouse_interface(client, creds)
     else:
         upload_interface(client)
+
 
 

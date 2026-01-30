@@ -161,7 +161,7 @@ def generate_single_label_pdf(item_row, label_qty, creds, client, settings):
         {'range': 'B5', 'values': [[desc_clean]]},
         {'range': 'B7', 'values': [[str(item_row.get('vendor_sku', ''))]]},
         {'range': 'C11', 'values': [[str(item_row.get('po_num', ''))]]},
-        {'range': 'F7', 'values': [[label_qty]]}
+        {'range': 'F7', 'values': [[label_qty]]},
         {'range': 'E6', 'values': [[str(item_row.get('order_num', ''))]]},
         {'range': 'B9', 'values': [[str(item_row.get('customer_name', ''))]]}
     ]
@@ -494,6 +494,7 @@ else:
         warehouse_interface(client, creds)
     else:
         upload_interface(client)
+
 
 
 

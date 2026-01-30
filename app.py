@@ -370,4 +370,95 @@ def warehouse_interface(client, creds):
                         with c_sku:
                             st.markdown(f"**{sku}**")
 
-# (Note: The user's provided code snippet ended here. Logic for c_qty and c_btn would follow.)
+# Qty Input (Unique key per item)
+                        with c_qty:
+                            # We default this input to the Shipped Qty from the main table
+                            qty_val = st.number_input("Qty", value=int(row['shipped_qty']), min_value=1, key=f"qty_{sku}_{order_id}", label_visibility="collapsed")
+                        
+                        # Print Button
+                        with c_btn:
+                            if st.button("Print", key=f"btn_{sku}_{order_id}"):
+                                with st.spinner("..."):
+                                    item_row = order_data[order_data['vendor_sku'] == sku].iloc[0]
+                                    merger = PdfWriter()
+                                    page = generate_single_label_pdf(item_row, qty_val, creds, client, current_settings)
+                                    if page: merger.add_page(page)
+                                    out = BytesIO()
+                                    merger.write(out)
+                                    # Create a unique download button that appears just for this item
+                                    st.session_state[f"pdf_{sku}"] = out.getvalue()
+
+                        # Show download button if generated
+                        if f"pdf_{sku}" in st.session_state:
+                            st.download_button("⬇️", st.session_state[f"pdf_{sku}"], f"Label_{sku}.pdf", mime="application/pdf", key=f"dl_{sku}")
+                        
+                        st.divider()
+
+                # Printer Settings (Collapsed at bottom)
+                with st.expander("⚙️ Settings"):
+                    p_rotate = st.checkbox("Rotate 90°", value=True)
+                    p_scale = st.slider("Scale", 0.5, 1.2, 0.95, 0.05)
+                    st.caption("Adjust only if labels are misaligned.")
+
+            # --- TAB 2: PACKING SLIP ---
+            with tab_slip:
+                st.info("Generates slip using 'Ship Qty' from the table.")
+                method = st.radio("Ship Method", ["Small Parcel", "LTL"])
+                
+                if st.button("📄 Generate Packing Slip", type="primary", key="btn_slip_main"):
+                    with st.spinner("Creating Slip..."):
+                        ps_sh = client.open_by_key(PACKING_SLIP_ID)
+                        ps_ws = ps_sh.worksheet("Template")
+                        
+                        set_rows_visibility(ps_sh, ps_ws.id, 19, 100, hide=False)
+                        
+                        updates = [
+                            {'range': 'B11', 'values': [[str(header.get('customer_name', ''))]]},
+                            {'range': 'B12', 'values': [[str(header.get('address_1', ''))]]},
+                            {'range': 'B13', 'values': [[str(header.get('address_2', ''))]]},
+                            {'range': 'B14', 'values': [[str(header.get('city_state_zip', ''))]]},
+                            {'range': 'H11', 'values': [[str(header.get('order_num', ''))]]},
+                            {'range': 'H12', 'values': [[str(header.get('po_num', ''))]]},
+                            {'range': 'H13', 'values': [[method]]},
+                        ]
+                        ps_ws.batch_update(updates)
+                        
+                        # Use data from editor
+                        final_items = edited_df[edited_df['shipped_qty'] > 0]
+                        ps_ws.batch_clear(["B19:H100"])
+                        
+                        num_lines = 0
+                        if not final_items.empty:
+                            rows = []
+                            for _, row in final_items.iterrows():
+                                rows.append([
+                                    str(order_data[order_data['vendor_sku']==row['vendor_sku']].iloc[0]['customer_sku']), # Retrieve hidden customer sku
+                                    str(row['vendor_sku']),
+                                    int(row['ordered_qty']),
+                                    int(row['shipped_qty']),
+                                    truncate_text(row['description'], 55)
+                                ])
+                            ps_ws.update(range_name="B19", values=rows)
+                            num_lines = len(rows)
+
+                        set_rows_visibility(ps_sh, ps_ws.id, 19 + num_lines, 150, hide=True)
+                        
+                        pdf_bytes = export_sheet_to_pdf(PACKING_SLIP_ID, ps_ws.id, creds)
+                        if pdf_bytes:
+                            st.success("Slip Ready!")
+                            st.download_button("⬇️ Download Slip", pdf_bytes, f"PS_{order_id}.pdf", mime="application/pdf", type="primary")
+
+# --- MAIN EXECUTION ---
+client, creds = get_gspread_client()
+
+if not client:
+    st.error("Authentication failed. Check your Streamlit Secrets.")
+else:
+    nav_option = st.radio("Menu", ["📦 Warehouse Ops", "📤 Upload Data"], horizontal=True, label_visibility="collapsed")
+    st.write("") 
+
+    if nav_option == "📦 Warehouse Ops":
+        warehouse_interface(client, creds)
+    else:
+        upload_interface(client)
+

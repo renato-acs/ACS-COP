@@ -7,6 +7,59 @@ import requests
 import time
 from io import BytesIO
 from pypdf import PdfWriter, PdfReader, Transformation
+from reportlab.pdfgen import canvas
+from reportlab.lib.units import inch
+
+def generate_labels_locally(dataframe, order_data):
+    """
+    Generates a batch PDF locally using ReportLab.
+    No Google API calls = No Rate Limits.
+    """
+    buffer = BytesIO()
+    # Standard 4x6 inch thermal label size
+    width, height = 4 * inch, 6 * inch
+    c = canvas.Canvas(buffer, pagesize=(width, height))
+    
+    for _, row in dataframe.iterrows():
+        qty = int(row['shipped_qty'])
+        sku = str(row['vendor_sku'])
+        desc = truncate_text(row['description'], 40)
+        
+        # Get extra data from the original order_data
+        full_row = order_data[order_data['vendor_sku'] == sku].iloc[0]
+        po_num = str(full_row['po_num'])
+        cust_sku = str(full_row['customer_sku'])
+
+        # Create one page per quantity needed
+        # (Or change logic to print 'Qty: X' on one label if preferred)
+        if qty > 0:
+            for _ in range(qty):
+                # --- DRAWING THE LABEL ---
+                c.rotate(90) # Rotate if your printer needs landscape
+                c.translate(0, -width) # Reset coordinates after rotation if needed
+                
+                # If you don't need rotation, remove the two lines above 
+                # and swap width/height in pagesize
+                
+                # Draw Text (Adjust coordinates x, y as needed)
+                c.setFont("Helvetica-Bold", 18)
+                c.drawString(0.2*inch, 3.5*inch, f"SKU: {sku}")
+                
+                c.setFont("Helvetica", 12)
+                c.drawString(0.2*inch, 3.2*inch, desc)
+                
+                c.setFont("Helvetica-Bold", 14)
+                c.drawString(0.2*inch, 2.5*inch, f"PO: {po_num}")
+                
+                c.setFont("Helvetica", 12)
+                c.drawString(0.2*inch, 2.2*inch, f"Cust SKU: {cust_sku}")
+
+                # Finalize this label page
+                c.showPage()
+                
+    c.save()
+    buffer.seek(0)
+    return buffer.getvalue()
 
 # --- CONFIGURATION ---
 SOURCE_SHEET_ID = "1nb8gE9i3GmxquG93hLX0a5Kn_GoGH1uCESdVxtXnkv0"
@@ -335,25 +388,19 @@ def warehouse_interface(client, creds):
             # --- TAB 1: LABELS (The "Mini Table" Interface) ---
             with tab_labels:
                 # Top "Print All" Button
-                if st.button("🖨️ PRINT ALL LABELS", type="primary", key="print_all_top"):
-                    with st.spinner("Generating Batch..."):
-                        merger = PdfWriter()
-                        # Use default settings since we hid the expander for cleanliness
-                        settings = {'rotate': True, 'scale': 0.95, 'x': -5, 'y': 25} 
-                        
-                        for idx, row in edited_df.iterrows():
-                            sku = row['vendor_sku']
-                            full_row = order_data[order_data['vendor_sku'] == sku].iloc[0]
-                            # Use the qty from the main table (Ship Qty) or Ordered Qty? 
-                            # Usually label qty = shipped qty. Let's use the editable ship qty from main table.
-                            qty = row['shipped_qty'] 
-                            if qty > 0:
-                                page = generate_single_label_pdf(full_row, qty, creds, client, settings)
-                                if page: merger.add_page(page)
-                        
-                        out = BytesIO()
-                        merger.write(out)
-                        st.download_button("⬇️ Download Batch PDF", out.getvalue(), f"Batch_{order_id}.pdf", mime="application/pdf", type="primary")
+               if st.button("🖨️ PRINT ALL LABELS", type="primary", key="print_all_top"):
+                with st.spinner("Generating Batch Locally..."):
+                    # 1. Generate the PDF bytes instantly
+                    pdf_bytes = generate_labels_locally(edited_df, order_data)
+                    
+                    # 2. Offer Download
+                    st.download_button(
+                        "⬇️ Download Batch PDF", 
+                        pdf_bytes, 
+                        f"Batch_{order_id}.pdf", 
+                        mime="application/pdf", 
+                        type="primary"
+                    )
                 
                 st.divider()
                 st.markdown("##### Individual Items")
@@ -470,6 +517,7 @@ else:
         warehouse_interface(client, creds)
     else:
         upload_interface(client)
+
 
 
 

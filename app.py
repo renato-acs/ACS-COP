@@ -31,68 +31,27 @@ SCOPES = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapi
 # --- SETUP ---
 st.set_page_config(page_title="Warehouse Portal", layout="wide", page_icon="📦")
 
-# --- CUSTOM CSS (ACCESSIBILITY & STYLING) ---
+# --- CUSTOM CSS ---
 st.markdown("""
 <style>
-    /* HIDE DEFAULT STREAMLIT HEADER & FOOTER */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     header[data-testid="stHeader"] {display: none;}
-
-    /* LAYOUT & SPACING */
     .block-container {padding-top: 1rem; padding-bottom: 5rem;}
-    
-    /* GLOBAL FONT SIZE INCREASE (Accessibility) */
-    html, body, [class*="css"] {
-        font-size: 18px !important; 
-    }
-    
-    /* BUTTON STYLING */
-    button[kind="primary"] {
-        width: 100%; 
-        border-radius: 6px; 
-        font-weight: bold; 
-        font-size: 18px !important;
-        padding: 0.5rem 1rem;
-    }
-    button[kind="secondary"] {
-        width: 100%;
-        border-radius: 6px;
-    }
-
-    /* STICKY HEADER */
+    html, body, [class*="css"] {font-size: 18px !important;}
+    button[kind="primary"] {width: 100%; border-radius: 6px; font-weight: bold; font-size: 18px !important; padding: 0.5rem 1rem;}
+    button[kind="secondary"] {width: 100%; border-radius: 6px;}
     div[data-testid="stVerticalBlock"] > div.element-container:has(div.sticky-marker) {
-        position: sticky;
-        top: 0;
-        z-index: 999;
-        background-color: white;
-        padding-top: 15px;
-        padding-bottom: 15px;
-        border-bottom: 3px solid #f0f2f6;
+        position: sticky; top: 0; z-index: 999; background-color: white;
+        padding-top: 15px; padding-bottom: 15px; border-bottom: 3px solid #f0f2f6;
         box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
     }
-    
-    /* DATA EDITOR / TABLE STYLING */
-    div[data-testid="stDataEditor"] table {
-        font-size: 18px !important;
-    }
-    
-    /* ALTERNATING ROW COLORS FOR TABLES */
-    div[data-testid="stDataEditor"] tr:nth-of-type(even) {
-        background-color: #f9f9f9;
-    }
-    div[data-testid="stDataEditor"] tr:hover {
-        background-color: #e6f7ff;
-    }
-
-    /* NAV BAR */
+    div[data-testid="stDataEditor"] table {font-size: 18px !important;}
+    div[data-testid="stDataEditor"] tr:nth-of-type(even) {background-color: #f9f9f9;}
+    div[data-testid="stDataEditor"] tr:hover {background-color: #e6f7ff;}
     div[role="radiogroup"] {
-        background-color: #f0f2f6;
-        padding: 10px;
-        border-radius: 8px;
-        display: flex;
-        justify-content: center;
-        margin-bottom: 20px;
+        background-color: #f0f2f6; padding: 10px; border-radius: 8px;
+        display: flex; justify-content: center; margin-bottom: 20px;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -120,16 +79,10 @@ def truncate_text(text, max_len=55):
 def export_sheet_to_pdf(sheet_id, sheet_gid, creds, fit=True, margin=0):
     url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export"
     params = {
-        "format": "pdf", 
-        "gid": sheet_gid, 
-        "portrait": "true",
-        "fitw": "true" if fit else "false", 
-        "gridlines": "false",
-        # MARGINS CONTROL (Values in inches)
-        "top_margin": str(margin),
-        "bottom_margin": str(margin),
-        "left_margin": str(margin),
-        "right_margin": str(margin)
+        "format": "pdf", "gid": sheet_gid, "portrait": "true",
+        "fitw": "true" if fit else "false", "gridlines": "false",
+        "top_margin": str(margin), "bottom_margin": str(margin),
+        "left_margin": str(margin), "right_margin": str(margin)
     }
     headers = {"Authorization": f"Bearer {creds.token}"}
     if not creds.valid:
@@ -150,6 +103,7 @@ def set_rows_visibility(spreadsheet, worksheet_id, start_row, end_row, hide=True
     }
     spreadsheet.batch_update(body)
 
+# --- GENERATE ITEM LABEL (THERMAL) ---
 def generate_single_label_pdf(item_row, label_qty, creds, client, settings):
     lbl_sh = client.open_by_key(LABEL_TEMPLATE_ID)
     lbl_ws = lbl_sh.worksheet("ItemLabel")
@@ -162,10 +116,13 @@ def generate_single_label_pdf(item_row, label_qty, creds, client, settings):
         {'range': 'B7', 'values': [[str(item_row.get('vendor_sku', ''))]]},
         {'range': 'C11', 'values': [[str(item_row.get('po_num', ''))]]},
         {'range': 'F7', 'values': [[label_qty]]},
+        # Updates requested in Turn #4
         {'range': 'E6', 'values': [[str(item_row.get('order_num', ''))]]},
         {'range': 'B9', 'values': [[str(item_row.get('customer_name', ''))]]}
     ]
     lbl_ws.batch_update(updates)
+    
+    # Sleep to ensure Google processes the update before export
     time.sleep(0.8)
     
     pdf_raw = export_sheet_to_pdf(LABEL_TEMPLATE_ID, lbl_ws.id, creds, fit=False, margin=0)
@@ -180,6 +137,29 @@ def generate_single_label_pdf(item_row, label_qty, creds, client, settings):
         if settings['rotate']: page.rotate(90)
         return page
     return None
+
+# --- GENERATE PALLET LABEL (NEW) ---
+def generate_pallet_label_pdf(header_data, creds, client):
+    # Same spreadsheet as item labels, different tab
+    lbl_sh = client.open_by_key(LABEL_TEMPLATE_ID)
+    try:
+        lbl_ws = lbl_sh.worksheet("PalletLabel")
+    except:
+        st.error("Sheet 'PalletLabel' not found in the template!")
+        return None
+
+    updates = [
+        {'range': 'C3', 'values': [[str(header_data.get('po_num', ''))]]},
+        {'range': 'C5', 'values': [[str(header_data.get('address_1', ''))]]},
+        {'range': 'C6', 'values': [[str(header_data.get('address_2', ''))]]},
+        {'range': 'C7', 'values': [[str(header_data.get('city_state_zip', ''))]]},
+        {'range': 'C9', 'values': [[str(header_data.get('order_num', ''))]]}
+    ]
+    lbl_ws.batch_update(updates)
+    time.sleep(1.0) # Slight pause for safety
+    
+    # Export full page (assuming 8.5x11 or whatever page setup is in the Sheet)
+    return export_sheet_to_pdf(LABEL_TEMPLATE_ID, lbl_ws.id, creds, fit=True, margin=0.25)
 
 # --- SCREEN 1: UPLOAD DATA ---
 def upload_interface(client):
@@ -294,25 +274,19 @@ def warehouse_interface(client, creds):
                     st.session_state.selected_order = None
                     st.rerun()
             with c2:
-                # Big bold header for older users
                 st.markdown(f"## {header['customer_name']}")
                 st.markdown(f"<h5>SO: {header['order_num']} &nbsp;|&nbsp; PO: {header['po_num']}</h5>", unsafe_allow_html=True)
         # === END STICKY HEADER ===
 
         st.write("") 
         
-        # Split layout: 70% Table, 30% Print Controls
         col_table, col_actions = st.columns([0.65, 0.35])
 
         # 1. TABLE (Left)
         with col_table:
             st.subheader("Items & Shipping")
-            
-            # Reorder columns: Ship Qty FIRST, then SKU, Desc, Ordered
             display_df = order_data[['vendor_sku', 'description', 'ordered_qty', 'customer_sku']].copy()
             display_df['shipped_qty'] = display_df['ordered_qty']
-            
-            # Rearrange for visibility: Ship | SKU | Desc | Ord
             display_df = display_df[['shipped_qty', 'vendor_sku', 'description', 'ordered_qty']]
             
             edited_df = st.data_editor(
@@ -331,29 +305,20 @@ def warehouse_interface(client, creds):
 
         # 2. ACTIONS (Right)
         with col_actions:
-            # We use tabs to separate Labels vs Packing Slip
             tab_labels, tab_slip = st.tabs(["🏷️ LABELS", "📄 PACKING SLIP"])
             
-            # --- TAB 1: LABELS ---
+            # --- TAB 1: LABELS (With Batch Print Fix) ---
             with tab_labels:
-                # Top "Print All" Button
                 if st.button("🖨️ PRINT ALL LABELS", type="primary", key="print_all_top"):
-                    
-                    # 1. THE MESSAGE: We update the spinner text here
-                    msg = "Processing your request. This might take a few minutes depending on the number of items..."
-                    
+                    msg = "Processing request. This may take a few minutes (approx 3s per label)..."
                     with st.spinner(msg):
                         merger = PdfWriter()
                         settings = {'rotate': True, 'scale': 0.95, 'x': -5, 'y': 25} 
                         
-                        # Filter first so we know exactly how many items we are processing
                         items_to_process = edited_df[edited_df['shipped_qty'] > 0]
                         total_items = len(items_to_process)
-                        
-                        # 2. PROGRESS BAR: Initialize it
                         progress_bar = st.progress(0)
                         
-                        # Loop with enumeration (i) to track progress
                         for i, (idx, row) in enumerate(items_to_process.iterrows()):
                             sku = row['vendor_sku']
                             full_row = order_data[order_data['vendor_sku'] == sku].iloc[0]
@@ -362,53 +327,29 @@ def warehouse_interface(client, creds):
                             if qty > 0:
                                 page = generate_single_label_pdf(full_row, qty, creds, client, settings)
                                 if page: merger.add_page(page)
-                                
-                                # 3. THE RATE LIMIT FIX: Pause for 3 seconds between items
+                                # RATE LIMIT FIX
                                 time.sleep(3)
                             
-                            # Update the progress bar (e.g., 1/10, 2/10...)
-                            current_progress = (i + 1) / total_items
-                            progress_bar.progress(current_progress)
-            
-                        # Clean up: Remove progress bar when finished
+                            progress_bar.progress((i + 1) / total_items)
+
                         progress_bar.empty()
-            
-                        # Finalize PDF
                         out = BytesIO()
                         merger.write(out)
                         
-                        # Success!
-                        st.success("Batch generation complete!")
-                        st.download_button(
-                            "⬇️ Download Batch PDF", 
-                            out.getvalue(), 
-                            f"Batch_{order_id}.pdf", 
-                            mime="application/pdf", 
-                            type="primary"
-                        )
+                        st.success("Batch ready!")
+                        st.download_button("⬇️ Download Batch PDF", out.getvalue(), f"Batch_{order_id}.pdf", mime="application/pdf", type="primary")
                 
                 st.divider()
                 st.markdown("##### Individual Items")
 
-                # The "Mini Table" Loop
+                # Individual Label Loop
                 current_settings = {'rotate': True, 'scale': 0.95, 'x': -5, 'y': 25}
-                
                 for idx, row in edited_df.iterrows():
                     sku = row['vendor_sku']
-                    # Visual Row
                     with st.container():
                         c_sku, c_qty, c_btn = st.columns([0.4, 0.3, 0.3])
-                        
-                        # SKU (Bold)
-                        with c_sku:
-                            st.markdown(f"**{sku}**")
-
-# Qty Input (Unique key per item)
-                        with c_qty:
-                            # We default this input to the Shipped Qty from the main table
-                            qty_val = st.number_input("Qty", value=int(row['shipped_qty']), min_value=1, key=f"qty_{sku}_{order_id}", label_visibility="collapsed")
-                        
-                        # Print Button
+                        with c_sku: st.markdown(f"**{sku}**")
+                        with c_qty: qty_val = st.number_input("Qty", value=int(row['shipped_qty']), min_value=1, key=f"qty_{sku}_{order_id}", label_visibility="collapsed")
                         with c_btn:
                             if st.button("Print", key=f"btn_{sku}_{order_id}"):
                                 with st.spinner("..."):
@@ -418,68 +359,82 @@ def warehouse_interface(client, creds):
                                     if page: merger.add_page(page)
                                     out = BytesIO()
                                     merger.write(out)
-                                    # Create a unique download button that appears just for this item
                                     st.session_state[f"pdf_{sku}"] = out.getvalue()
 
-                        # Show download button if generated
                         if f"pdf_{sku}" in st.session_state:
                             st.download_button("⬇️", st.session_state[f"pdf_{sku}"], f"Label_{sku}.pdf", mime="application/pdf", key=f"dl_{sku}")
-                        
                         st.divider()
 
-                # Printer Settings (Collapsed at bottom)
                 with st.expander("⚙️ Settings"):
-                    p_rotate = st.checkbox("Rotate 90°", value=True)
-                    p_scale = st.slider("Scale", 0.5, 1.2, 0.95, 0.05)
-                    st.caption("Adjust only if labels are misaligned.")
+                    st.checkbox("Rotate 90°", value=True, disabled=True)
+                    st.caption("Default settings active.")
 
-            # --- TAB 2: PACKING SLIP ---
+            # --- TAB 2: PACKING SLIP (With New Pallet Button) ---
             with tab_slip:
                 st.info("Generates slip using 'Ship Qty' from the table.")
                 method = st.radio("Ship Method", ["Small Parcel", "LTL"])
-                
-                if st.button("📄 Generate Packing Slip", type="primary", key="btn_slip_main"):
-                    with st.spinner("Creating Slip..."):
-                        ps_sh = client.open_by_key(PACKING_SLIP_ID)
-                        ps_ws = ps_sh.worksheet("Template")
-                        
-                        set_rows_visibility(ps_sh, ps_ws.id, 19, 100, hide=False)
-                        
-                        updates = [
-                            {'range': 'B11', 'values': [[str(header.get('customer_name', ''))]]},
-                            {'range': 'B12', 'values': [[str(header.get('address_1', ''))]]},
-                            {'range': 'B13', 'values': [[str(header.get('address_2', ''))]]},
-                            {'range': 'B14', 'values': [[str(header.get('city_state_zip', ''))]]},
-                            {'range': 'H11', 'values': [[str(header.get('order_num', ''))]]},
-                            {'range': 'H12', 'values': [[str(header.get('po_num', ''))]]},
-                            {'range': 'H13', 'values': [[method]]},
-                        ]
-                        ps_ws.batch_update(updates)
-                        
-                        # Use data from editor
-                        final_items = edited_df[edited_df['shipped_qty'] > 0]
-                        ps_ws.batch_clear(["B19:H100"])
-                        
-                        num_lines = 0
-                        if not final_items.empty:
-                            rows = []
-                            for _, row in final_items.iterrows():
-                                rows.append([
-                                    str(order_data[order_data['vendor_sku']==row['vendor_sku']].iloc[0]['customer_sku']), # Retrieve hidden customer sku
-                                    str(row['vendor_sku']),
-                                    int(row['ordered_qty']),
-                                    int(row['shipped_qty']),
-                                    truncate_text(row['description'], 55)
-                                ])
-                            ps_ws.update(range_name="B19", values=rows)
-                            num_lines = len(rows)
+                st.write("")
 
-                        set_rows_visibility(ps_sh, ps_ws.id, 19 + num_lines, 150, hide=True)
+                # Side-by-Side Buttons
+                col_slip_btn, col_pallet_btn = st.columns([0.5, 0.5])
+
+                # 1. Standard Packing Slip Button
+                with col_slip_btn:
+                    if st.button("📄 Packing Slip", type="primary", key="btn_slip_main"):
+                        with st.spinner("Creating Slip..."):
+                            ps_sh = client.open_by_key(PACKING_SLIP_ID)
+                            ps_ws = ps_sh.worksheet("Template")
+                            
+                            set_rows_visibility(ps_sh, ps_ws.id, 19, 100, hide=False)
+                            
+                            updates = [
+                                {'range': 'B11', 'values': [[str(header.get('customer_name', ''))]]},
+                                {'range': 'B12', 'values': [[str(header.get('address_1', ''))]]},
+                                {'range': 'B13', 'values': [[str(header.get('address_2', ''))]]},
+                                {'range': 'B14', 'values': [[str(header.get('city_state_zip', ''))]]},
+                                {'range': 'H11', 'values': [[str(header.get('order_num', ''))]]},
+                                {'range': 'H12', 'values': [[str(header.get('po_num', ''))]]},
+                                {'range': 'H13', 'values': [[method]]},
+                            ]
+                            ps_ws.batch_update(updates)
+                            
+                            final_items = edited_df[edited_df['shipped_qty'] > 0]
+                            ps_ws.batch_clear(["B19:H100"])
+                            
+                            num_lines = 0
+                            if not final_items.empty:
+                                rows = []
+                                for _, row in final_items.iterrows():
+                                    rows.append([
+                                        str(order_data[order_data['vendor_sku']==row['vendor_sku']].iloc[0]['customer_sku']),
+                                        str(row['vendor_sku']),
+                                        int(row['ordered_qty']),
+                                        int(row['shipped_qty']),
+                                        truncate_text(row['description'], 55)
+                                    ])
+                                ps_ws.update(range_name="B19", values=rows)
+                                num_lines = len(rows)
+
+                            set_rows_visibility(ps_sh, ps_ws.id, 19 + num_lines, 150, hide=True)
+                            
+                            pdf_bytes = export_sheet_to_pdf(PACKING_SLIP_ID, ps_ws.id, creds)
+                            if pdf_bytes:
+                                st.session_state['ps_pdf'] = pdf_bytes
+
+                    if 'ps_pdf' in st.session_state:
+                         st.download_button("⬇️ Download Slip", st.session_state['ps_pdf'], f"PS_{order_id}.pdf", mime="application/pdf")
+
+                # 2. Conditional Pallet Label Button
+                with col_pallet_btn:
+                    if method == "LTL":
+                        if st.button("📦 Pallet Label", key="btn_pallet"):
+                            with st.spinner("Generating Label..."):
+                                pdf_bytes = generate_pallet_label_pdf(header, creds, client)
+                                if pdf_bytes:
+                                    st.session_state['plt_pdf'] = pdf_bytes
                         
-                        pdf_bytes = export_sheet_to_pdf(PACKING_SLIP_ID, ps_ws.id, creds)
-                        if pdf_bytes:
-                            st.success("Slip Ready!")
-                            st.download_button("⬇️ Download Slip", pdf_bytes, f"PS_{order_id}.pdf", mime="application/pdf", type="primary")
+                        if 'plt_pdf' in st.session_state:
+                            st.download_button("⬇️ Download Label", st.session_state['plt_pdf'], f"Pallet_{order_id}.pdf", mime="application/pdf")
 
 # --- MAIN EXECUTION ---
 client, creds = get_gspread_client()
@@ -494,8 +449,3 @@ else:
         warehouse_interface(client, creds)
     else:
         upload_interface(client)
-
-
-
-
-

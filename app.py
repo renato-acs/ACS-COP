@@ -116,7 +116,6 @@ def generate_single_label_pdf(item_row, label_qty, creds, client, settings):
         {'range': 'B7', 'values': [[str(item_row.get('vendor_sku', ''))]]},
         {'range': 'C11', 'values': [[str(item_row.get('po_num', ''))]]},
         {'range': 'F7', 'values': [[label_qty]]},
-        # Updates requested in Turn #4
         {'range': 'E6', 'values': [[str(item_row.get('order_num', ''))]]},
         {'range': 'B9', 'values': [[str(item_row.get('customer_name', ''))]]}
     ]
@@ -138,9 +137,8 @@ def generate_single_label_pdf(item_row, label_qty, creds, client, settings):
         return page
     return None
 
-# --- GENERATE PALLET LABEL (NEW) ---
+# --- GENERATE PALLET LABEL (UPDATED FOR THERMAL) ---
 def generate_pallet_label_pdf(header_data, creds, client):
-    # Same spreadsheet as item labels, different tab
     lbl_sh = client.open_by_key(LABEL_TEMPLATE_ID)
     try:
         lbl_ws = lbl_sh.worksheet("PalletLabel")
@@ -156,10 +154,37 @@ def generate_pallet_label_pdf(header_data, creds, client):
         {'range': 'C9', 'values': [[str(header_data.get('order_num', ''))]]}
     ]
     lbl_ws.batch_update(updates)
-    time.sleep(1.0) # Slight pause for safety
+    time.sleep(1.0) 
     
-    # Export full page (assuming 8.5x11 or whatever page setup is in the Sheet)
-    return export_sheet_to_pdf(LABEL_TEMPLATE_ID, lbl_ws.id, creds, fit=True, margin=0.25)
+    # 1. Export Raw (Fit=False for thermal precision)
+    pdf_raw = export_sheet_to_pdf(LABEL_TEMPLATE_ID, lbl_ws.id, creds, fit=False, margin=0)
+    
+    # 2. Apply Transformations (Same as Item Label)
+    if pdf_raw:
+        reader = PdfReader(BytesIO(pdf_raw))
+        page = reader.pages[0]
+        
+        # Hardcoded settings to match Item Label defaults
+        settings = {'rotate': True, 'scale': 0.95, 'x': -5, 'y': 25}
+        
+        op = Transformation().scale(sx=settings['scale'], sy=settings['scale']).translate(tx=settings['x'], ty=settings['y'])
+        page.add_transformation(op)
+        
+        # Crop to 4x6 (Standard Thermal)
+        page.mediabox.lower_left = (0, page.mediabox.top - 288) 
+        page.mediabox.upper_right = (432, page.mediabox.top)
+        
+        # Rotate 90 degrees
+        if settings['rotate']: page.rotate(90)
+        
+        # 3. Write single page to bytes for download
+        output = BytesIO()
+        writer = PdfWriter()
+        writer.add_page(page)
+        writer.write(output)
+        return output.getvalue()
+
+    return None
 
 # --- SCREEN 1: UPLOAD DATA ---
 def upload_interface(client):

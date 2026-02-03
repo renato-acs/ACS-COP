@@ -329,7 +329,7 @@ def warehouse_interface(client, creds):
             )
 
         # 2. ACTIONS (Right)
-                with col_actions:
+            with col_actions:
                     tab_labels, tab_slip = st.tabs(["🏷️ LABELS", "📄 PACKING SLIP"])
             
                     # --- TAB 1: LABELS (With Batch Print Fix) ---
@@ -480,4 +480,5 @@ else:
         warehouse_interface(client, creds)
     else:
         upload_interface(client)
+
 

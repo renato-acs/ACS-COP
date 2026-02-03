@@ -329,72 +329,72 @@ def warehouse_interface(client, creds):
             )
 
         # 2. ACTIONS (Right)
-                with col_actions:
-                    tab_labels, tab_slip = st.tabs(["🏷️ LABELS", "📄 PACKING SLIP"])
-                    
-                    # --- TAB 1: LABELS (With Batch Print Fix) ---
-                    with tab_labels:
-                        if st.button("🖨️ PRINT ALL LABELS", type="primary", key="print_all_top"):
-                            msg = "Processing request. This may take a few minutes (approx 3s per label)..."
-                            with st.spinner(msg):
-                                merger = PdfWriter()
-                                settings = {'rotate': True, 'scale': 0.95, 'x': -5, 'y': 25} 
-                                
-                                items_to_process = edited_df[edited_df['shipped_qty'] > 0]
-                                total_items = len(items_to_process)
-                                progress_bar = st.progress(0)
-                                
-                                for i, (idx, row) in enumerate(items_to_process.iterrows()):
-                                    sku = row['vendor_sku']
-                                    
-                                    # --- FIX 1: FORCE STRING COMPARISON HERE ---
-                                    # We convert both the column and the variable to string (.astype(str) and str())
-                                    full_row = order_data[order_data['vendor_sku'].astype(str) == str(sku)].iloc[0]
-                                    
-                                    qty = row['shipped_qty'] 
-                                    
-                                    if qty > 0:
-                                        page = generate_single_label_pdf(full_row, qty, creds, client, settings)
-                                        if page: merger.add_page(page)
-                                        time.sleep(3)
-                                    
-                                    progress_bar.progress((i + 1) / total_items)
-        
-                                progress_bar.empty()
-                                out = BytesIO()
-                                merger.write(out)
-                                
-                                st.success("Batch ready!")
-                                st.download_button("⬇️ Download Batch PDF", out.getvalue(), f"Batch_{order_id}.pdf", mime="application/pdf", type="primary")
+        with col_actions:
+            tab_labels, tab_slip = st.tabs(["🏷️ LABELS", "📄 PACKING SLIP"])
+            
+            # --- TAB 1: LABELS (With Batch Print Fix) ---
+            with tab_labels:
+                if st.button("🖨️ PRINT ALL LABELS", type="primary", key="print_all_top"):
+                    msg = "Processing request. This may take a few minutes (approx 3s per label)..."
+                    with st.spinner(msg):
+                        merger = PdfWriter()
+                        settings = {'rotate': True, 'scale': 0.95, 'x': -5, 'y': 25} 
                         
-                        st.divider()
-                        st.markdown("##### Individual Items")
-        
-                        # Individual Label Loop
-                        current_settings = {'rotate': True, 'scale': 0.95, 'x': -5, 'y': 25}
-                        for idx, row in edited_df.iterrows():
+                        items_to_process = edited_df[edited_df['shipped_qty'] > 0]
+                        total_items = len(items_to_process)
+                        progress_bar = st.progress(0)
+                        
+                        for i, (idx, row) in enumerate(items_to_process.iterrows()):
                             sku = row['vendor_sku']
-                            with st.container():
-                                c_sku, c_qty, c_btn = st.columns([0.4, 0.3, 0.3])
-                                with c_sku: st.markdown(f"**{sku}**")
-                                with c_qty: qty_val = st.number_input("Qty", value=int(row['shipped_qty']), min_value=1, key=f"qty_{sku}_{order_id}", label_visibility="collapsed")
-                                with c_btn:
-                                    if st.button("Print", key=f"btn_{sku}_{order_id}"):
-                                        with st.spinner("..."):
-                                            
-                                            # --- FIX 2: FORCE STRING COMPARISON HERE TOO ---
-                                            item_row = order_data[order_data['vendor_sku'].astype(str) == str(sku)].iloc[0]
-                                            
-                                            merger = PdfWriter()
-                                            page = generate_single_label_pdf(item_row, qty_val, creds, client, current_settings)
-                                            if page: merger.add_page(page)
-                                            out = BytesIO()
-                                            merger.write(out)
-                                            st.session_state[f"pdf_{sku}"] = out.getvalue()
-        
-                                if f"pdf_{sku}" in st.session_state:
-                                    st.download_button("⬇️", st.session_state[f"pdf_{sku}"], f"Label_{sku}.pdf", mime="application/pdf", key=f"dl_{sku}")
-                                st.divider()
+                            
+                            # --- FIX 1: FORCE STRING COMPARISON HERE ---
+                            # We convert both the column and the variable to string (.astype(str) and str())
+                            full_row = order_data[order_data['vendor_sku'].astype(str) == str(sku)].iloc[0]
+                            
+                            qty = row['shipped_qty'] 
+                            
+                            if qty > 0:
+                                page = generate_single_label_pdf(full_row, qty, creds, client, settings)
+                                if page: merger.add_page(page)
+                                time.sleep(3)
+                            
+                            progress_bar.progress((i + 1) / total_items)
+
+                        progress_bar.empty()
+                        out = BytesIO()
+                        merger.write(out)
+                        
+                        st.success("Batch ready!")
+                        st.download_button("⬇️ Download Batch PDF", out.getvalue(), f"Batch_{order_id}.pdf", mime="application/pdf", type="primary")
+                
+                st.divider()
+                st.markdown("##### Individual Items")
+
+                # Individual Label Loop
+                current_settings = {'rotate': True, 'scale': 0.95, 'x': -5, 'y': 25}
+                for idx, row in edited_df.iterrows():
+                    sku = row['vendor_sku']
+                    with st.container():
+                        c_sku, c_qty, c_btn = st.columns([0.4, 0.3, 0.3])
+                        with c_sku: st.markdown(f"**{sku}**")
+                        with c_qty: qty_val = st.number_input("Qty", value=int(row['shipped_qty']), min_value=1, key=f"qty_{sku}_{order_id}", label_visibility="collapsed")
+                        with c_btn:
+                            if st.button("Print", key=f"btn_{sku}_{order_id}"):
+                                with st.spinner("..."):
+                                    
+                                    # --- FIX 2: FORCE STRING COMPARISON HERE TOO ---
+                                    item_row = order_data[order_data['vendor_sku'].astype(str) == str(sku)].iloc[0]
+                                    
+                                    merger = PdfWriter()
+                                    page = generate_single_label_pdf(item_row, qty_val, creds, client, current_settings)
+                                    if page: merger.add_page(page)
+                                    out = BytesIO()
+                                    merger.write(out)
+                                    st.session_state[f"pdf_{sku}"] = out.getvalue()
+
+                        if f"pdf_{sku}" in st.session_state:
+                            st.download_button("⬇️", st.session_state[f"pdf_{sku}"], f"Label_{sku}.pdf", mime="application/pdf", key=f"dl_{sku}")
+                        st.divider()
                         
                 with st.expander("⚙️ Settings"):
                     st.checkbox("Rotate 90°", value=True, disabled=True)
@@ -480,6 +480,7 @@ else:
         warehouse_interface(client, creds)
     else:
         upload_interface(client)
+
 
 
 

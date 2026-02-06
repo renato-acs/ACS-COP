@@ -356,7 +356,7 @@ def warehouse_interface(client, creds):
                             if qty > 0:
                                 page = generate_single_label_pdf(full_row, qty, creds, client, settings)
                                 if page: merger.add_page(page)
-                                time.sleep(2.0)
+                                time.sleep(3.5)
                             
                             progress_bar.progress((i + 1) / total_items)
 
@@ -480,6 +480,7 @@ else:
         warehouse_interface(client, creds)
     else:
         upload_interface(client)
+
 
 
 

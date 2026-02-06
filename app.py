@@ -328,73 +328,158 @@ def warehouse_interface(client, creds):
                 height=600
             )
 
-        # 2. ACTIONS (Right)
+# 2. ACTIONS (Right)
         with col_actions:
             tab_labels, tab_slip = st.tabs(["🏷️ LABELS", "📄 PACKING SLIP"])
             
-            # --- TAB 1: LABELS (With Batch Print Fix) ---
+            # --- TAB 1: LABELS (The Rerun Relay Fix) ---
             with tab_labels:
-                if st.button("🖨️ PRINT ALL LABELS", type="primary", key="print_all_top"):
-                    msg = "Processing request. This may take a few minutes (approx 3s per label)..."
-                    with st.spinner(msg):
-                        merger = PdfWriter()
-                        settings = {'rotate': True, 'scale': 0.95, 'x': -5, 'y': 25} 
-                        
-                        items_to_process = edited_df[edited_df['shipped_qty'] > 0]
-                        total_items = len(items_to_process)
-                        progress_bar = st.progress(0)
-                        
-                        for i, (idx, row) in enumerate(items_to_process.iterrows()):
-                            sku = row['vendor_sku']
-                            
-                            # --- FIX 1: FORCE STRING COMPARISON HERE ---
-                            # We convert both the column and the variable to string (.astype(str) and str())
-                            full_row = order_data[order_data['vendor_sku'].astype(str) == str(sku)].iloc[0]
-                            
-                            qty = row['shipped_qty'] 
-                            
-                            if qty > 0:
-                                page = generate_single_label_pdf(full_row, qty, creds, client, settings)
-                                if page: merger.add_page(page)
-                                time.sleep(3.5)
-                            
-                            progress_bar.progress((i + 1) / total_items)
-
-                        progress_bar.empty()
-                        out = BytesIO()
-                        merger.write(out)
-                        
-                        st.success("Batch ready!")
-                        st.download_button("⬇️ Download Batch PDF", out.getvalue(), f"Batch_{order_id}.pdf", mime="application/pdf", type="primary")
                 
-                st.divider()
-                st.markdown("##### Individual Items")
+                # --- A. INITIALIZE SESSION STATE FOR BATCHING ---
+                if "batch_queue" not in st.session_state:
+                    st.session_state.batch_queue = []
+                if "batch_pdfs" not in st.session_state:
+                    st.session_state.batch_pdfs = []
+                if "batch_active" not in st.session_state:
+                    st.session_state.batch_active = False
+                if "batch_total" not in st.session_state:
+                    st.session_state.batch_total = 0
 
-                # Individual Label Loop
-                current_settings = {'rotate': True, 'scale': 0.95, 'x': -5, 'y': 25}
-                for idx, row in edited_df.iterrows():
-                    sku = row['vendor_sku']
-                    with st.container():
-                        c_sku, c_qty, c_btn = st.columns([0.4, 0.3, 0.3])
-                        with c_sku: st.markdown(f"**{sku}**")
-                        with c_qty: qty_val = st.number_input("Qty", value=int(row['shipped_qty']), min_value=1, key=f"qty_{sku}_{order_id}", label_visibility="collapsed")
-                        with c_btn:
-                            if st.button("Print", key=f"btn_{sku}_{order_id}"):
-                                with st.spinner("..."):
-                                    
-                                    # --- FIX 2: FORCE STRING COMPARISON HERE TOO ---
-                                    item_row = order_data[order_data['vendor_sku'].astype(str) == str(sku)].iloc[0]
-                                    
-                                    merger = PdfWriter()
-                                    page = generate_single_label_pdf(item_row, qty_val, creds, client, current_settings)
-                                    if page: merger.add_page(page)
-                                    out = BytesIO()
-                                    merger.write(out)
-                                    st.session_state[f"pdf_{sku}"] = out.getvalue()
+                # --- B. UI LOGIC: EITHER SHOW BUTTONS OR SHOW PROGRESS ---
+                
+                # CASE 1: BATCH IS RUNNING (Hide buttons, show progress bar)
+                if st.session_state.batch_active:
+                    
+                    # Calculate progress
+                    processed_count = len(st.session_state.batch_pdfs)
+                    remaining_count = len(st.session_state.batch_queue)
+                    total = st.session_state.batch_total
+                    progress_val = processed_count / total if total > 0 else 0
+                    
+                    st.info(f"♻️ Processing Batch: {processed_count}/{total} completed...")
+                    my_bar = st.progress(progress_val)
+                    
+                    # --- PROCESS A CHUNK (3 Items at a time) ---
+                    # We do small chunks to stay under the 60s server timeout
+                    chunk_size = 3  
+                    
+                    # Take the next few items from the queue
+                    current_chunk = st.session_state.batch_queue[:chunk_size]
+                    
+                    if not current_chunk:
+                        # QUEUE IS EMPTY? WE ARE DONE!
+                        st.session_state.batch_active = False
+                        st.rerun()
+                    
+                    # Process the chunk
+                    settings = {'rotate': True, 'scale': 0.95, 'x': -5, 'y': 25}
+                    
+                    for item_data in current_chunk:
+                        sku = item_data['sku']
+                        qty = item_data['qty']
+                        
+                        # Get full row data
+                        # Force string conversion for safety
+                        full_row = order_data[order_data['vendor_sku'].astype(str) == str(sku)].iloc[0]
+                        
+                        try:
+                            page = generate_single_label_pdf(full_row, qty, creds, client, settings)
+                            if page:
+                                # Save the page object to our session list
+                                st.session_state.batch_pdfs.append(page)
+                        except Exception as e:
+                            st.error(f"Failed on {sku}: {e}")
+                        
+                        # Short sleep to satisfy Google
+                        time.sleep(1.5)
+                    
+                    # Remove processed items from queue
+                    st.session_state.batch_queue = st.session_state.batch_queue[chunk_size:]
+                    
+                    # RERUN TO RESET SERVER TIMER
+                    st.rerun()
 
-                        if f"pdf_{sku}" in st.session_state:
-                            st.download_button("⬇️", st.session_state[f"pdf_{sku}"], f"Label_{sku}.pdf", mime="application/pdf", key=f"dl_{sku}")
-                        st.divider()
+                # CASE 2: BATCH COMPLETE (Show Download)
+                elif st.session_state.batch_pdfs and not st.session_state.batch_active:
+                    st.success("✅ Batch Generation Complete!")
+                    
+                    # Merge all pages in memory
+                    merger = PdfWriter()
+                    for p in st.session_state.batch_pdfs:
+                        merger.add_page(p)
+                    
+                    out = BytesIO()
+                    merger.write(out)
+                    
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        st.download_button(
+                            "⬇️ Download Batch", 
+                            out.getvalue(), 
+                            f"Batch_{order_id}.pdf", 
+                            mime="application/pdf", 
+                            type="primary"
+                        )
+                    with c2:
+                        # Button to clear state and start over
+                        if st.button("Start New Batch"):
+                            st.session_state.batch_pdfs = []
+                            st.session_state.batch_total = 0
+                            st.rerun()
+                    
+                    st.divider()
+
+                # CASE 3: IDLE (Show "Print All" Button)
+                else:
+                    if st.button("🖨️ PRINT ALL LABELS", type="primary", key="print_all_top"):
+                        # 1. Prepare the Queue
+                        items_to_process = edited_df[edited_df['shipped_qty'] > 0]
+                        
+                        queue = []
+                        for idx, row in items_to_process.iterrows():
+                            queue.append({
+                                'sku': row['vendor_sku'],
+                                'qty': row['shipped_qty']
+                            })
+                        
+                        # 2. Set State
+                        st.session_state.batch_queue = queue
+                        st.session_state.batch_total = len(queue)
+                        st.session_state.batch_pdfs = [] # Clear old pdfs
+                        st.session_state.batch_active = True
+                        
+                        # 3. Start the relay!
+                        st.rerun()
+
+                # --- INDIVIDUAL ITEMS LIST (Keep this visible) ---
+                if not st.session_state.batch_active:
+                    st.divider()
+                    st.markdown("##### Individual Items")
+                    
+                    # ... (Your existing Individual Loop code goes here) ...
+                    # ... (Copy/Paste your previous logic for individual items) ...
+                    # ...
+                    current_settings = {'rotate': True, 'scale': 0.95, 'x': -5, 'y': 25}
+                    for idx, row in edited_df.iterrows():
+                        sku = row['vendor_sku']
+                        with st.container():
+                            c_sku, c_qty, c_btn = st.columns([0.4, 0.3, 0.3])
+                            with c_sku: st.markdown(f"**{sku}**")
+                            with c_qty: qty_val = st.number_input("Qty", value=int(row['shipped_qty']), min_value=1, key=f"qty_{sku}_{order_id}", label_visibility="collapsed")
+                            with c_btn:
+                                if st.button("Print", key=f"btn_{sku}_{order_id}"):
+                                    with st.spinner("..."):
+                                        item_row = order_data[order_data['vendor_sku'].astype(str) == str(sku)].iloc[0]
+                                        merger = PdfWriter()
+                                        page = generate_single_label_pdf(item_row, qty_val, creds, client, current_settings)
+                                        if page: merger.add_page(page)
+                                        out = BytesIO()
+                                        merger.write(out)
+                                        st.session_state[f"pdf_{sku}"] = out.getvalue()
+
+                            if f"pdf_{sku}" in st.session_state:
+                                st.download_button("⬇️", st.session_state[f"pdf_{sku}"], f"Label_{sku}.pdf", mime="application/pdf", key=f"dl_{sku}")
+                            st.divider()
                         
                 with st.expander("⚙️ Settings"):
                     st.checkbox("Rotate 90°", value=True, disabled=True)
@@ -480,6 +565,7 @@ else:
         warehouse_interface(client, creds)
     else:
         upload_interface(client)
+
 
 
 

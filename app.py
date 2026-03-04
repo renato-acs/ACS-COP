@@ -436,13 +436,25 @@ def warehouse_interface(client, creds):
                             if not final_items.empty:
                                 rows = []
                                 for _, row in final_items.iterrows():
-                                    rows.append([
-                                        str(order_data[order_data['vendor_sku']==row['vendor_sku']].iloc[0]['customer_sku']),
-                                        str(row['vendor_sku']),
-                                        int(row['ordered_qty']),
-                                        int(row['shipped_qty']),
-                                        truncate_text(row['description'], 55)
-                                    ])
+                                    # 1. Capture the SKU from the edited table
+                                    current_sku = str(row['vendor_sku'])
+                                    
+                                    # 2. Filter the original data by casting the column to string for the match
+                                    matched_rows = order_data[order_data['vendor_sku'].astype(str) == current_sku]
+                                    
+                                    if not matched_rows.empty:
+                                        source_row = matched_rows.iloc[0]
+                                        rows.append([
+                                            str(source_row['customer_sku']),
+                                            current_sku,
+                                            int(row['ordered_qty']),
+                                            int(row['shipped_qty']),
+                                            truncate_text(row['description'], 55)
+                                        ])
+                                    else:
+                                        # Fallback if for some reason the SKU isn't found
+                                        st.warning(f"SKU {current_sku} not found in original data.")
+                            
                                 ps_ws.update(range_name="B19", values=rows)
                                 num_lines = len(rows)
 
@@ -480,6 +492,7 @@ else:
         warehouse_interface(client, creds)
     else:
         upload_interface(client)
+
 
 
 
